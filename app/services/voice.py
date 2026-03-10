@@ -41,6 +41,42 @@ def mktimestamp(time_seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:06.3f}"
 
 
+def new_sub_maker() -> SubMaker:
+    """创建兼容新旧 edge-tts API 的 SubMaker。"""
+    sub_maker = SubMaker()
+    if not hasattr(sub_maker, "subs"):
+        sub_maker.subs = []
+    if not hasattr(sub_maker, "offset"):
+        sub_maker.offset = []
+    return sub_maker
+
+
+def add_subtitle_event(
+    sub_maker: SubMaker,
+    start_offset: int,
+    end_offset: int,
+    text: str,
+    boundary_type: str = "WordBoundary",
+) -> None:
+    """向 SubMaker 写入项目兼容的字幕事件。"""
+    if hasattr(sub_maker, "feed"):
+        duration = max(0, end_offset - start_offset)
+        try:
+            sub_maker.feed(
+                {
+                    "type": boundary_type,
+                    "offset": start_offset,
+                    "duration": duration,
+                    "text": text,
+                }
+            )
+        except Exception:
+            pass
+
+    sub_maker.subs.append(text)
+    sub_maker.offset.append((start_offset, end_offset))
+
+
 def get_all_azure_voices(filter_locals=None) -> list[str]:
     if filter_locals is None:
         filter_locals = ["zh-CN", "en-US", "zh-HK", "zh-TW", "vi-VN"]
@@ -1137,6 +1173,16 @@ def convert_pitch_to_percent(rate: float) -> str:
         return f"{percent}Hz"
 
 
+def get_edge_tts_proxy() -> str | None:
+    """返回 Edge TTS 应使用的代理地址。"""
+    proxy_enabled = config.proxy.get("enabled")
+    if proxy_enabled is False:
+        return None
+
+    proxy_url = (config.proxy.get("https") or config.proxy.get("http") or "").strip()
+    return proxy_url or None
+
+
 def azure_tts_v1(
     text: str, voice_name: str, voice_rate: float, voice_pitch: float, voice_file: str
 ) -> Union[SubMaker, None]:
@@ -1149,16 +1195,29 @@ def azure_tts_v1(
             logger.info(f"第 {i+1} 次使用 edge_tts 生成音频")
 
             async def _do() -> tuple[SubMaker, bytes]:
-                communicate = edge_tts.Communicate(text, voice_name, rate=rate_str, pitch=pitch_str, proxy=config.proxy.get("http"))
-                sub_maker = edge_tts.SubMaker()
+                communicate = edge_tts.Communicate(
+                    text,
+                    voice_name,
+                    rate=rate_str,
+                    pitch=pitch_str,
+                    boundary="WordBoundary",
+                    proxy=get_edge_tts_proxy(),
+                    connect_timeout=10,
+                    receive_timeout=60,
+                )
+                sub_maker = new_sub_maker()
                 audio_data = bytes()  # 用于存储音频数据
                 
                 async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
                         audio_data += chunk["data"]
-                    elif chunk["type"] == "WordBoundary":
-                        sub_maker.create_sub(
-                            (chunk["offset"], chunk["duration"]), chunk["text"]
+                    elif chunk["type"] in {"WordBoundary", "SentenceBoundary"}:
+                        add_subtitle_event(
+                            sub_maker,
+                            start_offset=chunk["offset"],
+                            end_offset=chunk["offset"] + chunk["duration"],
+                            text=chunk["text"],
+                            boundary_type=chunk["type"],
                         )
                 return sub_maker, audio_data
 
@@ -1166,18 +1225,21 @@ def azure_tts_v1(
             sub_maker, audio_data = asyncio.run(_do())
             
             # 验证数据是否有效
-            if not sub_maker or not sub_maker.subs or not audio_data:
-                logger.warning(f"failed, invalid data generated")
+            if not audio_data:
+                logger.warning("failed, no audio data generated")
                 if i < 2:
                     time.sleep(1)
                 continue
+
+            if not sub_maker.subs:
+                logger.warning("edge_tts returned audio without boundary events; subtitle timing may be unavailable")
 
             # 数据有效，写入文件
             with open(voice_file, "wb") as file:
                 file.write(audio_data)
             return sub_maker
         except Exception as e:
-            logger.error(f"生成音频文件时出错: {str(e)}")
+            logger.exception(f"生成音频文件时出错: {type(e).__name__}: {str(e)}")
             if i < 2:
                 time.sleep(1)
     return None
@@ -1220,13 +1282,12 @@ def azure_tts_v2(text: str, voice_name: str, voice_file: str) -> Union[SubMaker,
         try:
             logger.info(f"start, voice name: {processed_voice_name}, try: {i + 1}")
 
-            sub_maker = SubMaker()
+            sub_maker = new_sub_maker()
 
             def speech_synthesizer_word_boundary_cb(evt: speechsdk.SessionEventArgs):
                 duration = _format_duration_to_offset(str(evt.duration))
                 offset = _format_duration_to_offset(evt.audio_offset)
-                sub_maker.subs.append(evt.text)
-                sub_maker.offset.append((offset, offset + duration))
+                add_subtitle_event(sub_maker, offset, offset + duration, evt.text)
 
             # Creates an instance of a speech config with specified subscription key and service region.
             speech_key = config.azure.get("speech_key", "")
@@ -1717,9 +1778,9 @@ def qwen3_tts(text: str, voice_name: str, voice_file: str, speed: float = 1.0) -
                 f.write(audio_bytes)
 
             # 估算字幕
-            sub = SubMaker()
+            sub = new_sub_maker()
             est_ms = max(800, int(len(text) * 180))
-            sub.create_sub((0, est_ms), text)
+            add_subtitle_event(sub, 0, est_ms, text)
             
             logger.info(f"Qwen3 TTS 生成成功（DashScope SDK），文件大小: {len(audio_bytes)} 字节")
             return sub
@@ -1811,18 +1872,18 @@ def tencent_tts(text: str, voice_name: str, voice_file: str, speed: float = 1.0)
                 f.write(audio_data)
 
             # 创建字幕对象
-            sub_maker = SubMaker()
+            sub_maker = new_sub_maker()
             if resp.Subtitles:
                 for sub in resp.Subtitles:
                     start_ms = sub.BeginTime
                     end_ms = sub.EndTime
                     text = sub.Text
                     # 转换为 100ns 单位
-                    sub_maker.create_sub((start_ms * 10000, end_ms * 10000), text)
+                    add_subtitle_event(sub_maker, start_ms * 10000, end_ms * 10000, text)
             else:
                 # 如果没有字幕返回，则使用估算作为后备方案
                 duration_ms = len(text) * 200
-                sub_maker.create_sub((0, duration_ms * 10000), text)
+                add_subtitle_event(sub_maker, 0, duration_ms * 10000, text)
 
             logger.info(f"腾讯云 TTS 生成成功，文件大小: {len(audio_data)} 字节")
             return sub_maker
@@ -1903,7 +1964,7 @@ def soulvoice_tts(text: str, voice_name: str, voice_file: str, speed: float = 1.
                 logger.info(f"SoulVoice TTS 成功生成音频: {voice_file}")
 
                 # SoulVoice 不支持精确字幕生成，返回简单的 SubMaker 对象
-                sub_maker = SubMaker()
+                sub_maker = new_sub_maker()
                 sub_maker.subs = [text]  # 整个文本作为一个段落
                 sub_maker.offset = [(0, 0)]  # 占位时间戳
 
@@ -2034,10 +2095,10 @@ def indextts2_tts(text: str, voice_name: str, voice_file: str, speed: float = 1.
                 logger.info(f"IndexTTS2 成功生成音频: {voice_file}, 大小: {len(response.content)} 字节")
 
                 # IndexTTS2 不支持精确字幕生成，返回简单的 SubMaker 对象
-                sub_maker = SubMaker()
+                sub_maker = new_sub_maker()
                 # 估算音频时长（基于文本长度）
                 estimated_duration_ms = max(1000, int(len(text) * 200))
-                sub_maker.create_sub((0, estimated_duration_ms * 10000), text)
+                add_subtitle_event(sub_maker, 0, estimated_duration_ms * 10000, text)
 
                 return sub_maker
 
@@ -2068,6 +2129,3 @@ def indextts2_tts(text: str, voice_name: str, voice_file: str, speed: float = 1.
 
     logger.error("IndexTTS2 TTS 生成失败，已达到最大重试次数")
     return None
-
-
-

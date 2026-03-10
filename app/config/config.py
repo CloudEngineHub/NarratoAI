@@ -47,6 +47,7 @@ def load_config():
 def save_config():
     with open(config_file, "w", encoding="utf-8") as f:
         _cfg["app"] = app
+        _cfg["proxy"] = proxy
         _cfg["azure"] = azure
         _cfg["tencent"] = tencent
         _cfg["soulvoice"] = soulvoice

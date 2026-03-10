@@ -179,7 +179,7 @@ def render_proxy_settings(tr):
     proxy_enabled = st.checkbox(tr("Enable Proxy"), value=proxy_enabled)
     
     # 保存代理开关状态
-    # config.proxy["enabled"] = proxy_enabled
+    config.proxy["enabled"] = proxy_enabled
 
     # 只有在代理启用时才显示代理设置输入框
     if proxy_enabled:
@@ -196,8 +196,8 @@ def render_proxy_settings(tr):
         # 当代理被禁用时，清除环境变量和配置
         os.environ.pop("HTTP_PROXY", None)
         os.environ.pop("HTTPS_PROXY", None)
-        # config.proxy["http"] = ""
-        # config.proxy["https"] = ""
+        config.proxy["http"] = ""
+        config.proxy["https"] = ""
 
 
 def test_vision_model_connection(api_key, base_url, model_name, provider, tr):
