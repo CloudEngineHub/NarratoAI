@@ -12,6 +12,8 @@
 NarratoAI is an automated video narration tool that provides an all-in-one solution for script writing, automated video editing, voice-over, and subtitle generation, powered by LLM to enhance efficient content creation.
 <br>
 
+> **🔥 Highly Recommended: The new paradigm of VibeCut —— [Speclip](https://speclip.com) , a true editing Agent! [👉 Click to download for free](https://speclip.com)**
+
 [![madewithlove](https://img.shields.io/badge/made_with-%E2%9D%A4-red?style=for-the-badge&labelColor=orange)](https://github.com/linyqh/NarratoAI)
 [![GitHub license](https://img.shields.io/github/license/linyqh/NarratoAI?style=for-the-badge)](https://github.com/linyqh/NarratoAI/blob/main/LICENSE)
 [![GitHub issues](https://img.shields.io/github/issues/linyqh/NarratoAI?style=for-the-badge)](https://github.com/linyqh/NarratoAI/issues)
