@@ -3,6 +3,16 @@ import traceback
 import streamlit as st
 import os
 from app.config import config
+from app.config.defaults import (
+    DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+    DEFAULT_OPENAI_COMPATIBLE_PROVIDER,
+    DEFAULT_TEXT_LLM_PROVIDER,
+    DEFAULT_TEXT_OPENAI_MODEL_NAME,
+    DEFAULT_VISION_LLM_PROVIDER,
+    DEFAULT_VISION_OPENAI_MODEL_NAME,
+    get_openai_compatible_ui_values,
+    normalize_openai_compatible_model_name as normalize_openai_compatible_model_id,
+)
 from app.utils import utils
 from loguru import logger
 from app.services.llm.unified_service import UnifiedLLMService
@@ -116,10 +126,11 @@ def validate_openai_compatible_model_name(model_name: str, model_type: str) -> t
 
 
 def normalize_openai_compatible_model_name(model_name: str) -> str:
-    """将 provider/model 格式转换为网关实际使用的模型名。"""
-    if "/" not in model_name:
-        return model_name
-    return model_name.split("/", 1)[1]
+    """仅剥离误保存的 openai/ 前缀，保留完整模型名称。"""
+    return normalize_openai_compatible_model_id(
+        model_name,
+        provider=DEFAULT_OPENAI_COMPATIBLE_PROVIDER,
+    )
 
 
 def show_config_validation_errors(errors: list):
@@ -419,37 +430,22 @@ def render_vision_llm_settings(tr):
     st.subheader(tr("Vision Model Settings"))
 
     # 固定使用 OpenAI 兼容 提供商
-    config.app["vision_llm_provider"] = "openai"
+    config.app["vision_llm_provider"] = DEFAULT_VISION_LLM_PROVIDER
 
     # 获取已保存的配置
-    full_vision_model_name = config.app.get("vision_openai_model_name") or "gemini/gemini-2.0-flash-lite"
+    full_vision_model_name = config.app.get("vision_openai_model_name") or DEFAULT_VISION_OPENAI_MODEL_NAME
     vision_api_key = config.app.get("vision_openai_api_key", "")
-    vision_base_url = config.app.get("vision_openai_base_url", "")
-
-    # 解析 provider 和 model
-    default_provider = "gemini"
-    default_model = "gemini-2.0-flash-lite"
+    vision_base_url = config.app.get("vision_openai_base_url", DEFAULT_OPENAI_COMPATIBLE_BASE_URL)
     
-    if "/" in full_vision_model_name:
-        parts = full_vision_model_name.split("/", 1)
-        current_provider = parts[0]
-        current_model = parts[1]
-    else:
-        current_provider = default_provider
-        current_model = full_vision_model_name
+    # 固定 provider 为 openai，模型输入框保留完整模型名称
+    current_provider, current_model = get_openai_compatible_ui_values(
+        full_vision_model_name,
+        DEFAULT_VISION_OPENAI_MODEL_NAME,
+        provider=DEFAULT_VISION_LLM_PROVIDER,
+    )
 
     # 定义支持的 provider 列表
-    OPENAI_COMPATIBLE_PROVIDERS = [
-        "openai", "gemini", "deepseek", "qwen", "siliconflow", "moonshot", 
-        "anthropic", "azure", "ollama", "vertex_ai", "mistral", "codestral", 
-        "volcengine", "groq", "cohere", "together_ai", "fireworks_ai", 
-        "openrouter", "replicate", "huggingface", "xai", "deepgram", "vllm", 
-        "bedrock", "cloudflare"
-    ]
-    
-    # 如果当前 provider 不在列表中，添加到列表头部
-    if current_provider not in OPENAI_COMPATIBLE_PROVIDERS:
-        OPENAI_COMPATIBLE_PROVIDERS.insert(0, current_provider)
+    OPENAI_COMPATIBLE_PROVIDERS = ["openai"]
 
     # 渲染配置输入框
     col1, col2 = st.columns([1, 2])
@@ -465,18 +461,18 @@ def render_vision_llm_settings(tr):
         model_name_input = st.text_input(
             tr("Vision Model Name"),
             value=current_model,
-            help="输入模型名称（不包含 provider 前缀）\n\n"
+            help="输入完整模型名称\n\n"
                  "常用示例:\n"
-                 "• gemini-2.0-flash-lite\n"
+                 "• Qwen/Qwen3.5-122B-A10B\n"
+                 "• gemini/gemini-2.0-flash-lite\n"
                  "• gpt-4o\n"
-                 "• qwen-vl-max\n"
                  "• Qwen/Qwen2.5-VL-32B-Instruct (SiliconFlow)\n\n"
                  "支持常见 OpenAI 兼容网关（如 OpenAI/DeepSeek/OpenRouter/SiliconFlow）",
             key="vision_model_input"
         )
 
     # 组合完整的模型名称
-    st_vision_model_name = f"{selected_provider}/{model_name_input}" if selected_provider and model_name_input else ""
+    st_vision_model_name = normalize_openai_compatible_model_name(model_name_input)
 
     st_vision_api_key = st.text_input(
         tr("Vision API Key"),
@@ -691,37 +687,22 @@ def render_text_llm_settings(tr):
     st.subheader(tr("Text Generation Model Settings"))
 
     # 固定使用 OpenAI 兼容 提供商
-    config.app["text_llm_provider"] = "openai"
+    config.app["text_llm_provider"] = DEFAULT_TEXT_LLM_PROVIDER
 
     # 获取已保存的配置
-    full_text_model_name = config.app.get("text_openai_model_name") or "deepseek/deepseek-chat"
+    full_text_model_name = config.app.get("text_openai_model_name") or DEFAULT_TEXT_OPENAI_MODEL_NAME
     text_api_key = config.app.get("text_openai_api_key", "")
-    text_base_url = config.app.get("text_openai_base_url", "")
+    text_base_url = config.app.get("text_openai_base_url", DEFAULT_OPENAI_COMPATIBLE_BASE_URL)
 
-    # 解析 provider 和 model
-    default_provider = "deepseek"
-    default_model = "deepseek-chat"
-    
-    if "/" in full_text_model_name:
-        parts = full_text_model_name.split("/", 1)
-        current_provider = parts[0]
-        current_model = parts[1]
-    else:
-        current_provider = default_provider
-        current_model = full_text_model_name
+    # 固定 provider 为 openai，模型输入框保留完整模型名称
+    current_provider, current_model = get_openai_compatible_ui_values(
+        full_text_model_name,
+        DEFAULT_TEXT_OPENAI_MODEL_NAME,
+        provider=DEFAULT_TEXT_LLM_PROVIDER,
+    )
 
     # 定义支持的 provider 列表
-    OPENAI_COMPATIBLE_PROVIDERS = [
-        "openai", "gemini", "deepseek", "qwen", "siliconflow", "moonshot", 
-        "anthropic", "azure", "ollama", "vertex_ai", "mistral", "codestral", 
-        "volcengine", "groq", "cohere", "together_ai", "fireworks_ai", 
-        "openrouter", "replicate", "huggingface", "xai", "deepgram", "vllm", 
-        "bedrock", "cloudflare"
-    ]
-    
-    # 如果当前 provider 不在列表中，添加到列表头部
-    if current_provider not in OPENAI_COMPATIBLE_PROVIDERS:
-        OPENAI_COMPATIBLE_PROVIDERS.insert(0, current_provider)
+    OPENAI_COMPATIBLE_PROVIDERS = ["openai"]
 
     # 渲染配置输入框
     col1, col2 = st.columns([1, 2])
@@ -737,18 +718,18 @@ def render_text_llm_settings(tr):
         model_name_input = st.text_input(
             tr("Text Model Name"),
             value=current_model,
-            help="输入模型名称（不包含 provider 前缀）\n\n"
+            help="输入完整模型名称\n\n"
                  "常用示例:\n"
-                 "• deepseek-chat\n"
+                 "• Pro/zai-org/GLM-5\n"
+                 "• deepseek/deepseek-chat\n"
                  "• gpt-4o\n"
-                 "• gemini-2.0-flash\n"
                  "• deepseek-ai/DeepSeek-R1 (SiliconFlow)\n\n"
                  "支持常见 OpenAI 兼容网关（如 OpenAI/DeepSeek/OpenRouter/SiliconFlow）",
             key="text_model_input"
         )
 
     # 组合完整的模型名称
-    st_text_model_name = f"{selected_provider}/{model_name_input}" if selected_provider and model_name_input else ""
+    st_text_model_name = normalize_openai_compatible_model_name(model_name_input)
 
     st_text_api_key = st.text_input(
         tr("Text API Key"),

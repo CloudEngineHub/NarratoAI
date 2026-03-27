@@ -4,6 +4,8 @@ import toml
 import shutil
 from loguru import logger
 
+from app.config.defaults import build_default_app_config, merge_missing_app_defaults
+
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 config_file = f"{root_dir}/config.toml"
 version_file = f"{root_dir}/project_version"
@@ -27,21 +29,47 @@ def load_config():
         shutil.rmtree(config_file)
 
     if not os.path.isfile(config_file):
-        example_file = f"{root_dir}/config.example.toml"
-        if os.path.isfile(example_file):
-            shutil.copyfile(example_file, config_file)
-            logger.info(f"copy config.example.toml to config.toml")
+        _config_ = build_default_config()
+        write_config_file(_config_)
+        logger.info("create config.toml with shared defaults")
+        return _config_
 
     logger.info(f"load config from file: {config_file}")
 
+    _config_ = load_toml_file(config_file)
+    _config_["app"] = merge_missing_app_defaults(_config_.get("app", {}))
+    return _config_
+
+
+def load_toml_file(file_path):
+    """Load a TOML file and fall back to utf-8-sig when needed."""
     try:
-        _config_ = toml.load(config_file)
+        return toml.load(file_path)
     except Exception as e:
         logger.warning(f"load config failed: {str(e)}, try to load as utf-8-sig")
-        with open(config_file, mode="r", encoding="utf-8-sig") as fp:
+        with open(file_path, mode="r", encoding="utf-8-sig") as fp:
             _cfg_content = fp.read()
-            _config_ = toml.loads(_cfg_content)
-    return _config_
+            return toml.loads(_cfg_content)
+
+
+def build_default_config():
+    """Build the initial config file content for a fresh installation."""
+    example_file = f"{root_dir}/config.example.toml"
+    config_data = {}
+    if os.path.isfile(example_file):
+        config_data = load_toml_file(example_file)
+
+    config_data["app"] = build_default_app_config(config_data.get("app", {}))
+    return config_data
+
+
+def write_config_file(config_data):
+    parent_dir = os.path.dirname(config_file)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+    with open(config_file, "w", encoding="utf-8") as f:
+        f.write(toml.dumps(config_data))
 
 
 def save_config():

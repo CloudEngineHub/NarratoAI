@@ -21,48 +21,14 @@ from openai import (
 )
 
 from app.config import config
+from app.config.defaults import normalize_openai_compatible_model_name
 from .base import TextModelProvider, VisionModelProvider
 from .exceptions import APICallError, AuthenticationError, ContentFilterError, RateLimitError
 
-# 常见 OpenAI 兼容网关前缀。若使用 provider/model 格式，将剥离 provider 前缀。
-OPENAI_COMPATIBLE_PROVIDER_PREFIXES = {
-    "openai",
-    "gemini",
-    "deepseek",
-    "qwen",
-    "siliconflow",
-    "moonshot",
-    "openrouter",
-    "anthropic",
-    "azure",
-    "ollama",
-    "mistral",
-    "groq",
-    "cohere",
-    "together_ai",
-    "fireworks_ai",
-    "volcengine",
-    "vertex_ai",
-    "huggingface",
-    "xai",
-    "bedrock",
-    "cloudflare",
-    "vllm",
-    "codestral",
-    "replicate",
-    "deepgram",
-}
-
 
 def _normalize_model_name(model_name: str) -> str:
-    """兼容历史 provider/model 写法，必要时自动剥离 provider 前缀。"""
-    if "/" not in model_name:
-        return model_name
-
-    provider_prefix, raw_model = model_name.split("/", 1)
-    if provider_prefix.lower() in OPENAI_COMPATIBLE_PROVIDER_PREFIXES and raw_model:
-        return raw_model
-    return model_name
+    """仅剥离误保存的 openai/ 前缀，保留完整模型名称。"""
+    return normalize_openai_compatible_model_name(model_name)
 
 
 def _is_response_format_error(message: str) -> bool:
