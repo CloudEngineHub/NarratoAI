@@ -68,7 +68,7 @@ class BaseLLMProvider(ABC):
         """验证模型支持情况（宽松模式，仅记录警告）"""
         from loguru import logger
 
-        # LiteLLM 已提供统一的模型验证，传统 provider 使用宽松验证
+        # OpenAI 兼容网关的模型数量较多，运行时由远端完成最终校验
         if self.model_name not in self.supported_models:
             logger.warning(
                 f"模型 {self.model_name} 未在供应商 {self.provider_name} 的预定义支持列表中。"

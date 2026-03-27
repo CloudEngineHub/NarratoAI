@@ -12,8 +12,7 @@ NarratoAI 大模型服务模块
 - OutputValidator: 输出格式验证器
 
 支持的供应商:
-视觉模型: Gemini, QwenVL, Siliconflow
-文本模型: OpenAI, DeepSeek, Gemini, Qwen, Moonshot, Siliconflow
+视觉模型/文本模型: OpenAI 兼容接口（可对接 OpenAI、DeepSeek、Gemini 网关、Qwen 网关等）
 """
 
 from .manager import LLMServiceManager

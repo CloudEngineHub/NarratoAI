@@ -4,7 +4,7 @@
 统一管理所有大模型服务提供商，提供简单的工厂方法来创建和获取服务实例
 """
 
-from typing import Dict, Type, Optional
+from typing import Dict, Type, Optional, Tuple
 from loguru import logger
 
 from app.config import config
@@ -64,6 +64,29 @@ class LLMServiceManager:
             "vision_providers": list(cls._vision_providers.keys()),
             "text_providers": list(cls._text_providers.keys())
         }
+
+    @classmethod
+    def _normalize_provider_name(cls, provider_name: str) -> str:
+        """规范化 provider 名称。"""
+        return provider_name.lower()
+
+    @classmethod
+    def _get_provider_config(
+        cls,
+        model_type: str,
+        provider_name: str
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """
+        获取 provider 配置。
+
+        model_type: 'vision' 或 'text'
+        """
+        config_prefix = f"{model_type}_{provider_name}"
+        api_key = config.app.get(f"{config_prefix}_api_key")
+        model_name = config.app.get(f"{config_prefix}_model_name")
+        base_url = config.app.get(f"{config_prefix}_base_url")
+
+        return api_key, model_name, base_url
     
     @classmethod
     def get_vision_provider(cls, provider_name: Optional[str] = None) -> VisionModelProvider:
@@ -89,9 +112,8 @@ class LLMServiceManager:
 
         # 确定提供商名称
         if not provider_name:
-            provider_name = config.app.get('vision_llm_provider', 'gemini').lower()
-        else:
-            provider_name = provider_name.lower()
+            provider_name = config.app.get('vision_llm_provider', 'openai')
+        provider_name = cls._normalize_provider_name(provider_name)
 
         # 检查缓存
         cache_key = f"vision_{provider_name}"
@@ -104,9 +126,7 @@ class LLMServiceManager:
         
         # 获取配置
         config_prefix = f"vision_{provider_name}"
-        api_key = config.app.get(f'{config_prefix}_api_key')
-        model_name = config.app.get(f'{config_prefix}_model_name')
-        base_url = config.app.get(f'{config_prefix}_base_url')
+        api_key, model_name, base_url = cls._get_provider_config("vision", provider_name)
         
         if not api_key:
             raise ConfigurationError(f"缺少API密钥配置: {config_prefix}_api_key")
@@ -157,9 +177,8 @@ class LLMServiceManager:
 
         # 确定提供商名称
         if not provider_name:
-            provider_name = config.app.get('text_llm_provider', 'openai').lower()
-        else:
-            provider_name = provider_name.lower()
+            provider_name = config.app.get('text_llm_provider', 'openai')
+        provider_name = cls._normalize_provider_name(provider_name)
 
         logger.debug(f"获取文本模型提供商: {provider_name}")
         logger.debug(f"已注册的文本提供商: {list(cls._text_providers.keys())}")
@@ -178,9 +197,7 @@ class LLMServiceManager:
         
         # 获取配置
         config_prefix = f"text_{provider_name}"
-        api_key = config.app.get(f'{config_prefix}_api_key')
-        model_name = config.app.get(f'{config_prefix}_model_name')
-        base_url = config.app.get(f'{config_prefix}_base_url')
+        api_key, model_name, base_url = cls._get_provider_config("text", provider_name)
         
         if not api_key:
             raise ConfigurationError(f"缺少API密钥配置: {config_prefix}_api_key")

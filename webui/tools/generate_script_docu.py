@@ -123,7 +123,7 @@ def generate_script_docu(params):
             # 最佳实践：使用 get() 的默认值参数 + 从 config 获取备用值
             vision_llm_provider = (
                 st.session_state.get('vision_llm_provider') or
-                config.app.get('vision_llm_provider', 'litellm')
+                config.app.get('vision_llm_provider', 'openai')
             ).lower()
 
             logger.info(f"使用 {vision_llm_provider.upper()} 进行视觉分析")

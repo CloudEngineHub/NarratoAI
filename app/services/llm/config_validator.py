@@ -214,7 +214,7 @@ class LLMConfigValidator:
                 "建议为每个提供商配置base_url以提高稳定性",
                 "定期检查模型名称是否为最新版本",
                 "建议配置多个提供商作为备用方案",
-                "推荐使用 LiteLLM 作为统一接口，支持 100+ providers"
+                "推荐使用 OpenAI 兼容接口，便于接入多家模型网关"
             ]
         }
         
@@ -257,8 +257,8 @@ class LLMConfigValidator:
                 "text": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
             },
             "openai": {
-                "vision": [],
-                "text": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]
+                "vision": ["gpt-4o", "gemini-2.0-flash-lite", "Qwen/Qwen2.5-VL-32B-Instruct"],
+                "text": ["gpt-4o-mini", "deepseek-chat", "zai-org/GLM-4.6"]
             },
             "qwen": {
                 "vision": ["qwen2.5-vl-32b-instruct"],

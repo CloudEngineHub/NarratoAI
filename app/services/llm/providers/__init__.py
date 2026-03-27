@@ -2,7 +2,6 @@
 大模型服务提供商实现
 
 包含各种大模型服务提供商的具体实现
-推荐使用 LiteLLM 统一接口（支持 100+ providers）
 """
 
 # 不在模块顶部导入 provider 类，避免循环依赖
@@ -13,25 +12,25 @@ def register_all_providers():
     """
     注册所有提供商
 
-    v0.8.0 变更：只注册 LiteLLM 统一接口
-    - 移除了旧的单独 provider 实现 (gemini, openai, qwen, deepseek, siliconflow)
-    - LiteLLM 支持 100+ providers，无需单独实现
+    当前实现：只注册 OpenAI 兼容统一接口
     """
     # 在函数内部导入，避免循环依赖
     from ..manager import LLMServiceManager
     from loguru import logger
 
-    # 只导入 LiteLLM provider
-    from ..litellm_provider import LiteLLMVisionProvider, LiteLLMTextProvider
+    # 只导入 OpenAI 兼容 provider
+    from ..openai_compatible_provider import (
+        OpenAICompatibleVisionProvider,
+        OpenAICompatibleTextProvider,
+    )
 
     logger.info("🔧 开始注册 LLM 提供商...")
 
-    # ===== 注册 LiteLLM 统一接口 =====
-    # LiteLLM 支持 100+ providers（OpenAI, Gemini, Qwen, DeepSeek, SiliconFlow, 等）
-    LLMServiceManager.register_vision_provider('litellm', LiteLLMVisionProvider)
-    LLMServiceManager.register_text_provider('litellm', LiteLLMTextProvider)
+    # ===== 注册 OpenAI 兼容统一接口 =====
+    LLMServiceManager.register_vision_provider('openai', OpenAICompatibleVisionProvider)
+    LLMServiceManager.register_text_provider('openai', OpenAICompatibleTextProvider)
 
-    logger.info("✅ LiteLLM 提供商注册完成（支持 100+ providers）")
+    logger.info("✅ OpenAI 兼容提供商注册完成")
 
 
 # 导出注册函数

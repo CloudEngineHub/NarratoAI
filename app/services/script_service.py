@@ -133,7 +133,7 @@ class ScriptGenerator:
         from app.services.llm.migration_adapter import create_vision_analyzer
 
         # 获取配置
-        text_provider = config.app.get('text_llm_provider', 'litellm').lower()
+        text_provider = config.app.get('text_llm_provider', 'openai').lower()
         vision_api_key = config.app.get(f'vision_{vision_llm_provider}_api_key')
         vision_model = config.app.get(f'vision_{vision_llm_provider}_model_name')
         vision_base_url = config.app.get(f'vision_{vision_llm_provider}_base_url')
