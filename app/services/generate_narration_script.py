@@ -38,46 +38,90 @@ def parse_frame_analysis_to_markdown(json_file_path):
         with open(json_file_path, 'r', encoding='utf-8') as file:
             data = json.load(file)
         
-        # 初始化Markdown字符串
+        def time_to_milliseconds(time_text):
+            time_text = (time_text or "").strip()
+            if not time_text:
+                return 0
+            try:
+                if "," in time_text:
+                    hhmmss, ms = time_text.split(",", 1)
+                    milliseconds = int(ms)
+                else:
+                    hhmmss = time_text
+                    milliseconds = 0
+
+                parts = [int(part) for part in hhmmss.split(":") if part]
+                while len(parts) < 3:
+                    parts.insert(0, 0)
+                hours, minutes, seconds = parts[-3], parts[-2], parts[-1]
+                return ((hours * 3600 + minutes * 60 + seconds) * 1000) + milliseconds
+            except Exception:
+                return 0
+
+        def batch_sort_key(batch):
+            time_range = batch.get("time_range", "")
+            start = time_range.split("-", 1)[0].strip()
+            return time_to_milliseconds(start), batch.get("batch_index", 0)
+
         markdown = ""
-        
-        # 获取总结和帧观察数据
+
+        # 新结构：按批次保存完整分析产物
+        if isinstance(data.get("batches"), list):
+            ordered_batches = sorted(data.get("batches", []), key=batch_sort_key)
+
+            for i, batch in enumerate(ordered_batches, 1):
+                time_range = batch.get("time_range", "")
+                summary = (
+                    batch.get("overall_activity_summary")
+                    or batch.get("summary")
+                    or batch.get("fallback_summary")
+                    or ""
+                )
+                observations = batch.get("frame_observations") or batch.get("observations") or []
+
+                markdown += f"## 片段 {i}\n"
+                markdown += f"- 时间范围：{time_range}\n"
+                markdown += f"- 片段描述：{summary}\n" if summary else "- 片段描述：\n"
+                markdown += "- 详细描述：\n"
+
+                for frame in observations:
+                    timestamp = frame.get("timestamp", "")
+                    observation = frame.get("observation", "")
+                    markdown += f"  - {timestamp}: {observation}\n" if observation else f"  - {timestamp}: \n"
+
+                markdown += "\n"
+
+            return markdown
+
+        # 兼容旧结构
         summaries = data.get('overall_activity_summaries', [])
         frame_observations = data.get('frame_observations', [])
-        
-        # 按批次组织数据
+
         batch_frames = {}
         for frame in frame_observations:
             batch_index = frame.get('batch_index')
             if batch_index not in batch_frames:
                 batch_frames[batch_index] = []
             batch_frames[batch_index].append(frame)
-        
-        # 生成Markdown内容
+
         for i, summary in enumerate(summaries, 1):
             batch_index = summary.get('batch_index')
             time_range = summary.get('time_range', '')
             batch_summary = summary.get('summary', '')
-            
+
             markdown += f"## 片段 {i}\n"
             markdown += f"- 时间范围：{time_range}\n"
-            
-            # 添加片段描述
             markdown += f"- 片段描述：{batch_summary}\n" if batch_summary else f"- 片段描述：\n"
-            
             markdown += "- 详细描述：\n"
-            
-            # 添加该批次的帧观察详情
+
             frames = batch_frames.get(batch_index, [])
             for frame in frames:
                 timestamp = frame.get('timestamp', '')
                 observation = frame.get('observation', '')
-                
-                # 直接使用原始文本，不进行分割
                 markdown += f"  - {timestamp}: {observation}\n" if observation else f"  - {timestamp}: \n"
-            
+
             markdown += "\n"
-        
+
         return markdown
     
     except Exception as e:

@@ -1,9 +1,16 @@
+import asyncio
 import json
 import os
 import re
+from datetime import datetime
+from typing import Any, Callable
 
-from app.utils import utils
+from loguru import logger
+
+from app.config import config
 from app.services.documentary.frame_analysis_models import FrameBatchResult
+from app.services.llm.migration_adapter import create_vision_analyzer
+from app.utils import utils, video_processor
 
 
 class DocumentaryFrameAnalysisService:
@@ -23,7 +30,487 @@ JSON 必须包含以下键：
   "overall_activity_summary": "本批次主要活动总结"
 }}
 请务必不要遗漏视频帧，我提供了 {frame_count} 张视频帧，frame_observations 必须包含 {frame_count} 个元素
+请只返回 JSON 字符串，不要附加解释文字。
 """.strip()
+
+    async def generate_documentary_script(
+        self,
+        *,
+        video_path: str,
+        video_theme: str = "",
+        custom_prompt: str = "",
+        frame_interval_input: int | float = 3,
+        vision_batch_size: int = 10,
+        vision_llm_provider: str = "openai",
+        progress_callback: Callable[[float, str], None] | None = None,
+        vision_api_key: str | None = None,
+        vision_model_name: str | None = None,
+        vision_base_url: str | None = None,
+        max_concurrency: int | None = None,
+    ) -> list[dict]:
+        analysis_result = await self.analyze_video(
+            video_path=video_path,
+            video_theme=video_theme,
+            custom_prompt=custom_prompt,
+            frame_interval_input=frame_interval_input,
+            vision_batch_size=vision_batch_size,
+            vision_llm_provider=vision_llm_provider,
+            progress_callback=progress_callback,
+            vision_api_key=vision_api_key,
+            vision_model_name=vision_model_name,
+            vision_base_url=vision_base_url,
+            max_concurrency=max_concurrency,
+        )
+        return analysis_result["video_clip_json"]
+
+    async def analyze_video(
+        self,
+        *,
+        video_path: str,
+        video_theme: str = "",
+        custom_prompt: str = "",
+        frame_interval_input: int | float = 3,
+        vision_batch_size: int = 10,
+        vision_llm_provider: str = "openai",
+        progress_callback: Callable[[float, str], None] | None = None,
+        vision_api_key: str | None = None,
+        vision_model_name: str | None = None,
+        vision_base_url: str | None = None,
+        max_concurrency: int | None = None,
+    ) -> dict[str, Any]:
+        progress = progress_callback or (lambda _p, _m: None)
+
+        if not video_path or not os.path.exists(video_path):
+            raise FileNotFoundError(f"视频文件不存在: {video_path}")
+
+        frame_interval_seconds = self._resolve_frame_interval(frame_interval_input)
+        batch_size = self._resolve_batch_size(vision_batch_size)
+        concurrency = self._resolve_max_concurrency(max_concurrency)
+        provider = (vision_llm_provider or config.app.get("vision_llm_provider", "openai")).lower()
+
+        api_key = vision_api_key or config.app.get(f"vision_{provider}_api_key")
+        model_name = vision_model_name or config.app.get(f"vision_{provider}_model_name")
+        base_url = vision_base_url or config.app.get(f"vision_{provider}_base_url", "")
+        if not api_key or not model_name:
+            raise ValueError(
+                f"未配置 {provider} 的 API Key 或模型名称。"
+                f"请在设置中配置 vision_{provider}_api_key 和 vision_{provider}_model_name"
+            )
+
+        progress(10, "正在提取关键帧...")
+        keyframe_files = self._load_or_extract_keyframes(video_path, frame_interval_seconds)
+        progress(25, f"关键帧准备完成，共 {len(keyframe_files)} 帧")
+
+        progress(30, "正在初始化视觉分析器...")
+        analyzer = create_vision_analyzer(
+            provider=provider,
+            api_key=api_key,
+            model=model_name,
+            base_url=base_url,
+        )
+
+        batches = self._chunk_keyframes(keyframe_files, batch_size=batch_size)
+        if not batches:
+            raise RuntimeError("未能构建任何关键帧批次")
+
+        progress(40, f"正在分析关键帧，共 {len(batches)} 个批次...")
+        batch_results = await self._analyze_batches(
+            analyzer=analyzer,
+            batches=batches,
+            custom_prompt=custom_prompt,
+            video_theme=video_theme,
+            max_concurrency=concurrency,
+            progress_callback=progress,
+        )
+
+        progress(65, "正在整理分析结果...")
+        sorted_batches = self._sort_batch_results(batch_results)
+        artifact = self._build_analysis_artifact(
+            sorted_batches,
+            video_path=video_path,
+            frame_interval_seconds=frame_interval_seconds,
+            vision_batch_size=batch_size,
+            vision_llm_provider=provider,
+            vision_model_name=model_name,
+            max_concurrency=concurrency,
+        )
+        analysis_json_path = self._save_analysis_artifact(artifact)
+        video_clip_json = self._build_video_clip_json(sorted_batches)
+
+        progress(75, "逐帧分析完成")
+        return {
+            "analysis_json_path": analysis_json_path,
+            "analysis_artifact": artifact,
+            "video_clip_json": video_clip_json,
+            "keyframe_files": keyframe_files,
+        }
+
+    def _resolve_frame_interval(self, frame_interval_input: int | float | None) -> float:
+        interval = frame_interval_input
+        if interval in (None, ""):
+            interval = config.frames.get("frame_interval_input", 3)
+        try:
+            value = float(interval)
+        except (TypeError, ValueError):
+            value = 3.0
+        if value <= 0:
+            raise ValueError("frame_interval_input must be > 0")
+        return value
+
+    def _resolve_batch_size(self, vision_batch_size: int | None) -> int:
+        size = vision_batch_size or config.frames.get("vision_batch_size", 10)
+        try:
+            value = int(size)
+        except (TypeError, ValueError):
+            value = 10
+        if value <= 0:
+            raise ValueError("vision_batch_size must be > 0")
+        return value
+
+    def _resolve_max_concurrency(self, max_concurrency: int | None) -> int:
+        value = max_concurrency if max_concurrency is not None else config.frames.get("vision_max_concurrency", 2)
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = 1
+        return max(1, parsed)
+
+    def _load_or_extract_keyframes(self, video_path: str, frame_interval_seconds: float) -> list[str]:
+        keyframes_root = os.path.join(utils.temp_dir(), "keyframes")
+        os.makedirs(keyframes_root, exist_ok=True)
+        cache_key = self._build_keyframe_cache_key(video_path, frame_interval_seconds)
+        cache_dir = os.path.join(keyframes_root, cache_key)
+        os.makedirs(cache_dir, exist_ok=True)
+
+        cached_files = self._collect_keyframe_paths(cache_dir)
+        if cached_files:
+            logger.info(f"使用已缓存关键帧: {cache_dir}, 共 {len(cached_files)} 帧")
+            return cached_files
+
+        processor = video_processor.VideoProcessor(video_path)
+        extracted = processor.extract_frames_by_interval_with_fallback(
+            output_dir=cache_dir,
+            interval_seconds=frame_interval_seconds,
+        )
+        keyframe_files = sorted(str(path) for path in extracted if str(path).endswith(".jpg"))
+        if not keyframe_files:
+            keyframe_files = self._collect_keyframe_paths(cache_dir)
+        if not keyframe_files:
+            raise RuntimeError("未提取到任何关键帧")
+
+        logger.info(f"关键帧提取完成: {cache_dir}, 共 {len(keyframe_files)} 帧")
+        return keyframe_files
+
+    def _build_keyframe_cache_key(self, video_path: str, frame_interval_seconds: float) -> str:
+        try:
+            video_mtime = os.path.getmtime(video_path)
+        except OSError:
+            video_mtime = 0
+
+        legacy_prefix = utils.md5(f"{video_path}{video_mtime}")
+        payload = "|".join(
+            [
+                str(video_path),
+                str(video_mtime),
+                str(frame_interval_seconds),
+                "documentary-keyframes-v2",
+            ]
+        )
+        return f"{legacy_prefix}_{utils.md5(payload)}"
+
+    @staticmethod
+    def _collect_keyframe_paths(cache_dir: str) -> list[str]:
+        if not os.path.exists(cache_dir):
+            return []
+        return sorted(
+            os.path.join(cache_dir, name)
+            for name in os.listdir(cache_dir)
+            if re.fullmatch(r"keyframe_\d{6}_\d{9}\.jpg", name)
+        )
+
+    @staticmethod
+    def _chunk_keyframes(keyframe_files: list[str], batch_size: int) -> list[list[str]]:
+        return [keyframe_files[index : index + batch_size] for index in range(0, len(keyframe_files), batch_size)]
+
+    async def _analyze_batches(
+        self,
+        *,
+        analyzer: Any,
+        batches: list[list[str]],
+        custom_prompt: str,
+        video_theme: str,
+        max_concurrency: int,
+        progress_callback: Callable[[float, str], None],
+    ) -> list[FrameBatchResult]:
+        semaphore = asyncio.Semaphore(max(1, max_concurrency))
+        total = len(batches)
+        done = 0
+        done_lock = asyncio.Lock()
+
+        batch_time_ranges: list[str] = []
+        previous_batch_files: list[str] | None = None
+        for batch_files in batches:
+            _, _, time_range = self._get_batch_timestamps(batch_files, previous_batch_files)
+            batch_time_ranges.append(time_range)
+            previous_batch_files = batch_files
+
+        async def run_single(batch_index: int, frame_paths: list[str], time_range: str) -> FrameBatchResult:
+            nonlocal done
+            prompt = self._build_batch_prompt(
+                frame_count=len(frame_paths),
+                video_theme=video_theme,
+                custom_prompt=custom_prompt,
+            )
+            try:
+                async with semaphore:
+                    raw_results = await analyzer.analyze_images(
+                        images=frame_paths,
+                        prompt=prompt,
+                        batch_size=max(1, len(frame_paths)),
+                        max_concurrency=1,
+                    )
+                raw_response, error_message = self._extract_batch_response(raw_results)
+                if error_message:
+                    return self._build_failed_batch_result(
+                        batch_index=batch_index,
+                        raw_response=raw_response,
+                        error_message=error_message,
+                        frame_paths=frame_paths,
+                        time_range=time_range,
+                    )
+                return self._parse_batch_response(
+                    batch_index=batch_index,
+                    raw_response=raw_response,
+                    frame_paths=frame_paths,
+                    time_range=time_range,
+                )
+            except Exception as exc:
+                return self._build_failed_batch_result(
+                    batch_index=batch_index,
+                    raw_response="",
+                    error_message=str(exc),
+                    frame_paths=frame_paths,
+                    time_range=time_range,
+                )
+            finally:
+                async with done_lock:
+                    done += 1
+                    progress = 40 + (done / max(1, total)) * 25
+                    progress_callback(progress, f"正在分析关键帧批次 ({done}/{total})...")
+
+        tasks = [
+            run_single(batch_index=index, frame_paths=batch_files, time_range=batch_time_ranges[index])
+            for index, batch_files in enumerate(batches)
+        ]
+        return await asyncio.gather(*tasks)
+
+    def _build_batch_prompt(self, *, frame_count: int, video_theme: str, custom_prompt: str) -> str:
+        prompt = self._build_analysis_prompt(frame_count=frame_count)
+        extra_lines: list[str] = []
+        if (video_theme or "").strip():
+            extra_lines.append(f"视频主题：{video_theme.strip()}")
+        if (custom_prompt or "").strip():
+            extra_lines.append(custom_prompt.strip())
+        if not extra_lines:
+            return prompt
+
+        extras = "\n".join(f"- {line}" for line in extra_lines)
+        return f"{prompt}\n\n补充分析要求：\n{extras}"
+
+    def _extract_batch_response(self, raw_results: Any) -> tuple[str, str]:
+        if not raw_results:
+            return "", "Batch response is empty"
+
+        first_result = raw_results[0] if isinstance(raw_results, list) else raw_results
+        if isinstance(first_result, dict):
+            raw_response = str(first_result.get("response", "") or "")
+            error_message = str(first_result.get("error", "") or "")
+            if error_message:
+                if not raw_response:
+                    raw_response = error_message
+                return raw_response, error_message
+            if not raw_response.strip():
+                return raw_response, "Batch response is empty"
+            return raw_response, ""
+
+        raw_response = str(first_result or "")
+        if not raw_response.strip():
+            return raw_response, "Batch response is empty"
+        return raw_response, ""
+
+    def _sort_batch_results(self, batch_results: list[FrameBatchResult]) -> list[FrameBatchResult]:
+        return sorted(batch_results, key=lambda item: (self._time_range_sort_key(item.time_range), item.batch_index))
+
+    def _build_analysis_artifact(
+        self,
+        batch_results: list[FrameBatchResult],
+        *,
+        video_path: str,
+        frame_interval_seconds: float,
+        vision_batch_size: int,
+        vision_llm_provider: str,
+        vision_model_name: str,
+        max_concurrency: int,
+    ) -> dict[str, Any]:
+        sorted_batches = self._sort_batch_results(batch_results)
+
+        batch_dicts: list[dict[str, Any]] = []
+        frame_observations: list[dict[str, Any]] = []
+        overall_activity_summaries: list[dict[str, Any]] = []
+
+        for batch in sorted_batches:
+            batch_payload = {
+                "batch_index": batch.batch_index,
+                "status": batch.status,
+                "time_range": batch.time_range,
+                "raw_response": batch.raw_response,
+                "frame_paths": list(batch.frame_paths),
+                "frame_observations": list(batch.frame_observations),
+                "overall_activity_summary": batch.overall_activity_summary,
+                "fallback_summary": batch.fallback_summary,
+                "error_message": batch.error_message,
+            }
+            batch_dicts.append(batch_payload)
+
+            for observation in batch.frame_observations:
+                observation_payload = dict(observation)
+                observation_payload["batch_index"] = batch.batch_index
+                observation_payload["time_range"] = batch.time_range
+                frame_observations.append(observation_payload)
+
+            summary_text = (batch.overall_activity_summary or batch.fallback_summary or "").strip()
+            if summary_text:
+                overall_activity_summaries.append(
+                    {
+                        "batch_index": batch.batch_index,
+                        "time_range": batch.time_range,
+                        "summary": summary_text,
+                    }
+                )
+
+        return {
+            "artifact_version": "documentary-frame-analysis-v2",
+            "generated_at": datetime.now().isoformat(),
+            "video_path": video_path,
+            "frame_interval_seconds": frame_interval_seconds,
+            "vision_batch_size": vision_batch_size,
+            "vision_llm_provider": vision_llm_provider,
+            "vision_model_name": vision_model_name,
+            "vision_max_concurrency": max_concurrency,
+            "batches": batch_dicts,
+            # 向后兼容旧解析器结构
+            "frame_observations": frame_observations,
+            "overall_activity_summaries": overall_activity_summaries,
+        }
+
+    def _save_analysis_artifact(self, artifact: dict[str, Any]) -> str:
+        analysis_dir = os.path.join(utils.storage_dir(), "temp", "analysis")
+        os.makedirs(analysis_dir, exist_ok=True)
+
+        filename = f"frame_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        file_path = os.path.join(analysis_dir, filename)
+        suffix = 1
+        while os.path.exists(file_path):
+            filename = f"frame_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{suffix:02d}.json"
+            file_path = os.path.join(analysis_dir, filename)
+            suffix += 1
+
+        with open(file_path, "w", encoding="utf-8") as fp:
+            json.dump(artifact, fp, ensure_ascii=False, indent=2)
+        logger.info(f"分析结果已保存到: {file_path}")
+        return file_path
+
+    def _build_video_clip_json(self, batch_results: list[FrameBatchResult]) -> list[dict]:
+        clips: list[dict] = []
+        for batch in self._sort_batch_results(batch_results):
+            picture = self._build_batch_picture(batch)
+            clips.append(
+                {
+                    "timestamp": batch.time_range,
+                    "picture": picture,
+                    "narration": "",
+                    "OST": 2,
+                }
+            )
+        return clips
+
+    def _build_batch_picture(self, batch: FrameBatchResult) -> str:
+        summary = (batch.overall_activity_summary or "").strip()
+        if summary:
+            return summary
+
+        fallback = (batch.fallback_summary or "").strip()
+        if fallback:
+            return fallback
+
+        observation_lines = []
+        for frame in batch.frame_observations:
+            timestamp = str(frame.get("timestamp", "") or "").strip()
+            observation = str(frame.get("observation", "") or "").strip()
+            if timestamp and observation:
+                observation_lines.append(f"{timestamp}: {observation}")
+            elif observation:
+                observation_lines.append(observation)
+        if observation_lines:
+            return " ".join(observation_lines)
+
+        raw_response = (batch.raw_response or "").strip()
+        if raw_response:
+            return raw_response[:200]
+        return "该批次分析失败，未返回可用描述。"
+
+    def _time_range_sort_key(self, time_range: str) -> tuple[int, str]:
+        start = (time_range or "").split("-", 1)[0].strip()
+        return self._timestamp_to_milliseconds(start), time_range
+
+    @staticmethod
+    def _timestamp_to_milliseconds(timestamp: str) -> int:
+        text = (timestamp or "").strip()
+        try:
+            if "," in text:
+                time_part, ms_part = text.split(",", 1)
+                milliseconds = int(ms_part)
+            else:
+                time_part = text
+                milliseconds = 0
+
+            parts = [int(part) for part in time_part.split(":") if part]
+            while len(parts) < 3:
+                parts.insert(0, 0)
+            hours, minutes, seconds = parts[-3], parts[-2], parts[-1]
+            return ((hours * 3600 + minutes * 60 + seconds) * 1000) + milliseconds
+        except Exception:
+            return 0
+
+    def _get_batch_timestamps(
+        self,
+        batch_files: list[str],
+        prev_batch_files: list[str] | None = None,
+    ) -> tuple[str, str, str]:
+        if not batch_files:
+            return "00:00:00,000", "00:00:00,000", "00:00:00,000-00:00:00,000"
+
+        if len(batch_files) == 1 and prev_batch_files:
+            first_frame = os.path.basename(prev_batch_files[-1])
+            last_frame = os.path.basename(batch_files[0])
+        else:
+            first_frame = os.path.basename(batch_files[0])
+            last_frame = os.path.basename(batch_files[-1])
+
+        first_timestamp = self._timestamp_from_keyframe_name(first_frame)
+        last_timestamp = self._timestamp_from_keyframe_name(last_frame)
+        return first_timestamp, last_timestamp, f"{first_timestamp}-{last_timestamp}"
+
+    def _timestamp_from_keyframe_name(self, filename: str) -> str:
+        match = re.search(r"keyframe_\d{6}_(\d{9})\.jpg$", filename)
+        if not match:
+            return "00:00:00,000"
+        token = match.group(1)
+        hours = int(token[0:2])
+        minutes = int(token[2:4])
+        seconds = int(token[4:6])
+        milliseconds = int(token[6:9])
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
 
     def _build_analysis_prompt(self, frame_count: int) -> str:
         return self.PROMPT_TEMPLATE.format(frame_count=frame_count)
