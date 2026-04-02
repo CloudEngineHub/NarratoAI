@@ -46,6 +46,22 @@ class DocumentaryFrameAnalysisServiceTests(unittest.TestCase):
         self.assertEqual("", batch.raw_response)
         self.assertTrue(batch.fallback_summary)
 
+    def test_failed_batch_result_uses_prompt_contract_field_names(self):
+        service = DocumentaryFrameAnalysisService()
+
+        batch = service._build_failed_batch_result(
+            batch_index=4,
+            raw_response="not-json",
+            error_message="JSON decode failed",
+            frame_paths=["/tmp/keyframe_000002_000002000.jpg"],
+            time_range="00:00:06,000-00:00:09,000",
+        )
+
+        self.assertEqual([], batch.frame_observations)
+        self.assertEqual("", batch.overall_activity_summary)
+        self.assertFalse(hasattr(batch, "observations"))
+        self.assertFalse(hasattr(batch, "summary"))
+
 
 class DocumentaryAnalysisConfigTests(unittest.TestCase):
     def test_config_rejects_non_positive_frame_interval(self):

@@ -27,7 +27,7 @@ class FrameBatchResult:
     time_range: str
     raw_response: str
     frame_paths: list[str] = field(default_factory=list)
-    observations: list[dict] = field(default_factory=list)
-    summary: str = ""
+    frame_observations: list[dict] = field(default_factory=list)
+    overall_activity_summary: str = ""
     fallback_summary: str = ""
     error_message: str = ""
