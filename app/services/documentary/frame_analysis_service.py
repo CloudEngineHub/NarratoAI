@@ -97,8 +97,6 @@ JSON 必须包含以下键：
     ) -> FrameBatchResult:
         try:
             payload = json.loads(self._strip_code_fence(raw_response))
-            if not isinstance(payload, dict):
-                raise ValueError("Batch response JSON payload must be an object")
         except Exception as exc:
             return self._build_failed_batch_result(
                 batch_index=batch_index,
@@ -108,9 +106,17 @@ JSON 必须包含以下键：
                 time_range=time_range,
             )
 
-        raw_observations = payload.get("frame_observations")
-        if not isinstance(raw_observations, list):
-            raw_observations = []
+        validation_error = self._validate_batch_payload_contract(payload, expected_frame_count=len(frame_paths))
+        if validation_error:
+            return self._build_failed_batch_result(
+                batch_index=batch_index,
+                raw_response=raw_response,
+                error_message=validation_error,
+                frame_paths=frame_paths,
+                time_range=time_range,
+            )
+
+        raw_observations = payload["frame_observations"]
 
         frame_observations: list[dict] = []
         for index, frame_path in enumerate(frame_paths):
@@ -129,9 +135,7 @@ JSON 必须包含以下键：
                 }
             )
 
-        summary = payload.get("overall_activity_summary", "")
-        if not isinstance(summary, str):
-            summary = str(summary or "")
+        summary = payload["overall_activity_summary"]
 
         return FrameBatchResult(
             batch_index=batch_index,
@@ -142,3 +146,24 @@ JSON 必须包含以下键：
             frame_observations=frame_observations,
             overall_activity_summary=summary,
         )
+
+    def _validate_batch_payload_contract(self, payload: object, *, expected_frame_count: int) -> str:
+        if not isinstance(payload, dict):
+            return "Batch response JSON payload must be an object"
+
+        if "frame_observations" not in payload or not isinstance(payload["frame_observations"], list):
+            return "Batch response must include frame_observations as a list"
+
+        if len(payload["frame_observations"]) < expected_frame_count:
+            return (
+                "Batch response frame_observations length is shorter than provided frame_paths: "
+                f"{len(payload['frame_observations'])} < {expected_frame_count}"
+            )
+
+        if "overall_activity_summary" not in payload:
+            return "Batch response must include overall_activity_summary"
+
+        if not isinstance(payload["overall_activity_summary"], str):
+            return "Batch response overall_activity_summary must be a string"
+
+        return ""

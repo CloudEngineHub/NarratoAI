@@ -82,6 +82,45 @@ class DocumentaryFrameAnalysisServiceTests(unittest.TestCase):
         self.assertEqual([], batch.frame_observations)
         self.assertEqual("", batch.overall_activity_summary)
 
+    def test_parse_batch_returns_failed_result_for_empty_json_object(self):
+        service = DocumentaryFrameAnalysisService()
+
+        batch = service._parse_batch_response(
+            batch_index=0,
+            raw_response="{}",
+            frame_paths=["/tmp/keyframe_000000_000000000.jpg"],
+            time_range="00:00:00,000-00:00:03,000",
+        )
+
+        self.assertEqual("failed", batch.status)
+        self.assertEqual("{}", batch.raw_response)
+        self.assertIn("frame_observations", batch.error_message)
+
+    def test_parse_batch_returns_failed_result_when_observations_are_too_short(self):
+        service = DocumentaryFrameAnalysisService()
+        raw_response = """
+{
+  "frame_observations": [
+    {"observation": "第一帧画面"}
+  ],
+  "overall_activity_summary": "只有一条帧观察"
+}
+""".strip()
+
+        batch = service._parse_batch_response(
+            batch_index=1,
+            raw_response=raw_response,
+            frame_paths=[
+                "/tmp/keyframe_000000_000000000.jpg",
+                "/tmp/keyframe_000075_000003000.jpg",
+            ],
+            time_range="00:00:00,000-00:00:06,000",
+        )
+
+        self.assertEqual("failed", batch.status)
+        self.assertEqual(raw_response, batch.raw_response)
+        self.assertIn("frame_observations", batch.error_message)
+
     def test_parse_batch_parses_code_fenced_json_into_structured_result(self):
         service = DocumentaryFrameAnalysisService()
         raw_response = """```json
