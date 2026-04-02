@@ -39,6 +39,7 @@ bug清单.md
 task.md
 .claude/*
 .serena/*
+.worktrees/
 
 # OpenSpec: 忽略活动的变更提案，但保留归档和规范
 openspec/*
