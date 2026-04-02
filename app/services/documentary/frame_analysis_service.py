@@ -63,6 +63,8 @@ JSON 必须包含以下键：
         except OSError:
             video_mtime = 0
 
+        legacy_prefix = utils.md5(f"{video_path}{video_mtime}")
+
         payload = "|".join(
             [
                 str(video_path),
@@ -75,4 +77,4 @@ JSON 必须包含以下键：
                 "documentary-frame-analysis-v2",
             ]
         )
-        return utils.md5(payload)
+        return f"{legacy_prefix}_{utils.md5(payload)}"

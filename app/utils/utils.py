@@ -586,7 +586,11 @@ def clear_keyframes_cache(video_path: str = None, cache_scope: str = "keyframes"
 
         if video_path:
             # 清理指定视频的缓存（兼容前缀扩展键）
-            video_hash = md5(video_path + str(os.path.getmtime(video_path)))
+            try:
+                video_mtime = os.path.getmtime(video_path)
+            except OSError:
+                video_mtime = 0
+            video_hash = md5(video_path + str(video_mtime))
             for entry in os.listdir(cache_dir):
                 if not entry.startswith(video_hash):
                     continue

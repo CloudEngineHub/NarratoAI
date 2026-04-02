@@ -189,12 +189,16 @@ class VideoProcessor:
         """
         先尝试单次 ffmpeg 快路径抽帧，失败时回退到高兼容方案。
         """
+        if interval_seconds <= 0:
+            raise ValueError("interval_seconds must be > 0")
+
         os.makedirs(output_dir, exist_ok=True)
 
         try:
             return self._extract_frames_fast_path(output_dir, interval_seconds=interval_seconds)
         except Exception as exc:
             logger.warning(f"快路径抽帧失败，回退到兼容模式: {exc}")
+            self._cleanup_fast_path_artifacts(output_dir)
             self.extract_frames_by_interval_ultra_compatible(output_dir, interval_seconds=interval_seconds)
             return self._collect_extracted_frame_paths(output_dir)
 
@@ -258,8 +262,17 @@ class VideoProcessor:
         return sorted(
             os.path.join(output_dir, name)
             for name in os.listdir(output_dir)
-            if name.endswith(".jpg")
+            if re.fullmatch(r"keyframe_\d{6}_\d{9}\.jpg", name)
         )
+
+    @staticmethod
+    def _cleanup_fast_path_artifacts(output_dir: str) -> None:
+        for name in os.listdir(output_dir):
+            if not re.fullmatch(r"fastframe_\d{6}\.jpg", name):
+                continue
+            artifact_path = os.path.join(output_dir, name)
+            if os.path.isfile(artifact_path):
+                os.remove(artifact_path)
 
     def _extract_single_frame_optimized(self, timestamp: float, output_path: str,
                                        use_hw_accel: bool, hwaccel_type: str) -> bool:
