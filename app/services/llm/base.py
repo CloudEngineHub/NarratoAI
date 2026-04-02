@@ -108,6 +108,7 @@ class VisionModelProvider(BaseLLMProvider):
                            images: List[Union[str, Path, PIL.Image.Image]],
                            prompt: str,
                            batch_size: int = 10,
+                           max_concurrency: int = 1,
                            **kwargs) -> List[str]:
         """
         分析图片并返回结果
@@ -116,6 +117,7 @@ class VisionModelProvider(BaseLLMProvider):
             images: 图片路径列表或PIL图片对象列表
             prompt: 分析提示词
             batch_size: 批处理大小
+            max_concurrency: 最大并发批次数（实现支持时生效）
             **kwargs: 其他参数
             
         Returns:

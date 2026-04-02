@@ -1,4 +1,6 @@
+import json
 import os
+import re
 
 from app.utils import utils
 from app.services.documentary.frame_analysis_models import FrameBatchResult
@@ -78,3 +80,65 @@ JSON 必须包含以下键：
             ]
         )
         return f"{legacy_prefix}_{utils.md5(payload)}"
+
+    def _strip_code_fence(self, response_text: str) -> str:
+        cleaned = (response_text or "").strip()
+        cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+        return cleaned.strip()
+
+    def _parse_batch_response(
+        self,
+        *,
+        batch_index: int,
+        raw_response: str,
+        frame_paths: list[str],
+        time_range: str,
+    ) -> FrameBatchResult:
+        try:
+            payload = json.loads(self._strip_code_fence(raw_response))
+            if not isinstance(payload, dict):
+                raise ValueError("Batch response JSON payload must be an object")
+        except Exception as exc:
+            return self._build_failed_batch_result(
+                batch_index=batch_index,
+                raw_response=raw_response,
+                error_message=str(exc),
+                frame_paths=frame_paths,
+                time_range=time_range,
+            )
+
+        raw_observations = payload.get("frame_observations")
+        if not isinstance(raw_observations, list):
+            raw_observations = []
+
+        frame_observations: list[dict] = []
+        for index, frame_path in enumerate(frame_paths):
+            entry = raw_observations[index] if index < len(raw_observations) else {}
+            if isinstance(entry, dict):
+                observation = str(entry.get("observation", "") or "")
+                timestamp = str(entry.get("timestamp", "") or "")
+            else:
+                observation = str(entry or "")
+                timestamp = ""
+            frame_observations.append(
+                {
+                    "frame_path": frame_path,
+                    "timestamp": timestamp,
+                    "observation": observation,
+                }
+            )
+
+        summary = payload.get("overall_activity_summary", "")
+        if not isinstance(summary, str):
+            summary = str(summary or "")
+
+        return FrameBatchResult(
+            batch_index=batch_index,
+            status="success",
+            time_range=time_range,
+            raw_response=raw_response,
+            frame_paths=list(frame_paths),
+            frame_observations=frame_observations,
+            overall_activity_summary=summary,
+        )

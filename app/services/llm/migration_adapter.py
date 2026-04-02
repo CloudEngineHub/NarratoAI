@@ -159,7 +159,8 @@ class VisionAnalyzerAdapter:
     async def analyze_images(self,
                            images: List[Union[str, Path, PIL.Image.Image]],
                            prompt: str,
-                           batch_size: int = 10) -> List[Dict[str, Any]]:
+                           batch_size: int = 10,
+                           max_concurrency: int = 1) -> List[Dict[str, Any]]:
         """
         分析图片 - 兼容原有接口
 
@@ -167,6 +168,7 @@ class VisionAnalyzerAdapter:
             images: 图片列表
             prompt: 分析提示词
             batch_size: 批处理大小
+            max_concurrency: 最大并发批次数
 
         Returns:
             分析结果列表，格式与旧实现兼容
@@ -177,7 +179,8 @@ class VisionAnalyzerAdapter:
                 images=images,
                 prompt=prompt,
                 provider=self.provider,
-                batch_size=batch_size
+                batch_size=batch_size,
+                max_concurrency=max_concurrency,
             )
 
             # 转换为旧格式以保持向后兼容性

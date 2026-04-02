@@ -66,6 +66,63 @@ class DocumentaryFrameAnalysisServiceTests(unittest.TestCase):
         self.assertFalse(hasattr(batch, "observations"))
         self.assertFalse(hasattr(batch, "summary"))
 
+    def test_parse_batch_returns_failed_result_when_json_is_invalid(self):
+        service = DocumentaryFrameAnalysisService()
+
+        batch = service._parse_batch_response(
+            batch_index=0,
+            raw_response="plain text",
+            frame_paths=["/tmp/keyframe_000000_000000000.jpg"],
+            time_range="00:00:00,000-00:00:03,000",
+        )
+
+        self.assertEqual("failed", batch.status)
+        self.assertEqual("plain text", batch.raw_response)
+        self.assertEqual(["/tmp/keyframe_000000_000000000.jpg"], batch.frame_paths)
+        self.assertEqual([], batch.frame_observations)
+        self.assertEqual("", batch.overall_activity_summary)
+
+    def test_parse_batch_parses_code_fenced_json_into_structured_result(self):
+        service = DocumentaryFrameAnalysisService()
+        raw_response = """```json
+{
+  "frame_observations": [
+    {"observation": "第一帧画面"},
+    {"observation": "第二帧画面"}
+  ],
+  "overall_activity_summary": "人物从房间走到街道"
+}
+```"""
+
+        batch = service._parse_batch_response(
+            batch_index=1,
+            raw_response=raw_response,
+            frame_paths=[
+                "/tmp/keyframe_000000_000000000.jpg",
+                "/tmp/keyframe_000075_000003000.jpg",
+            ],
+            time_range="00:00:00,000-00:00:06,000",
+        )
+
+        self.assertEqual("success", batch.status)
+        self.assertEqual(
+            [
+                {
+                    "frame_path": "/tmp/keyframe_000000_000000000.jpg",
+                    "timestamp": "",
+                    "observation": "第一帧画面",
+                },
+                {
+                    "frame_path": "/tmp/keyframe_000075_000003000.jpg",
+                    "timestamp": "",
+                    "observation": "第二帧画面",
+                },
+            ],
+            batch.frame_observations,
+        )
+        self.assertEqual("人物从房间走到街道", batch.overall_activity_summary)
+        self.assertEqual("", batch.fallback_summary)
+
     def test_cache_key_changes_when_interval_changes(self):
         service = DocumentaryFrameAnalysisService()
 
