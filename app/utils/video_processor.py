@@ -185,6 +185,82 @@ class VideoProcessor:
 
         return frame_numbers
 
+    def extract_frames_by_interval_with_fallback(self, output_dir: str, interval_seconds: float = 5.0) -> List[str]:
+        """
+        先尝试单次 ffmpeg 快路径抽帧，失败时回退到高兼容方案。
+        """
+        os.makedirs(output_dir, exist_ok=True)
+
+        try:
+            return self._extract_frames_fast_path(output_dir, interval_seconds=interval_seconds)
+        except Exception as exc:
+            logger.warning(f"快路径抽帧失败，回退到兼容模式: {exc}")
+            self.extract_frames_by_interval_ultra_compatible(output_dir, interval_seconds=interval_seconds)
+            return self._collect_extracted_frame_paths(output_dir)
+
+    def _extract_frames_fast_path(self, output_dir: str, interval_seconds: float = 5.0) -> List[str]:
+        """
+        使用单次 ffmpeg 命令按固定间隔抽帧，随后重命名为既有 keyframe 约定格式。
+        """
+        if interval_seconds <= 0:
+            raise ValueError("interval_seconds must be > 0")
+
+        os.makedirs(output_dir, exist_ok=True)
+        raw_pattern = os.path.join(output_dir, "fastframe_%06d.jpg")
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            self.video_path,
+            "-vf",
+            f"fps=1/{interval_seconds}",
+            "-q:v",
+            "2",
+            "-start_number",
+            "0",
+            "-y",
+            raw_pattern,
+        ]
+        subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=120)
+
+        raw_files = sorted(
+            filename
+            for filename in os.listdir(output_dir)
+            if re.fullmatch(r"fastframe_\d{6}\.jpg", filename)
+        )
+        if not raw_files:
+            raise RuntimeError("Fast-path extraction produced no frames")
+
+        renamed_files: List[str] = []
+        for index, filename in enumerate(raw_files):
+            timestamp = index * interval_seconds
+            frame_number = int(timestamp * self.fps)
+            token = self._format_timestamp_token(timestamp)
+            source_path = os.path.join(output_dir, filename)
+            target_path = os.path.join(output_dir, f"keyframe_{frame_number:06d}_{token}.jpg")
+            os.replace(source_path, target_path)
+            renamed_files.append(target_path)
+
+        return renamed_files
+
+    @staticmethod
+    def _format_timestamp_token(timestamp: float) -> str:
+        hours = int(timestamp // 3600)
+        minutes = int((timestamp % 3600) // 60)
+        seconds = int(timestamp % 60)
+        milliseconds = int((timestamp % 1) * 1000)
+        return f"{hours:02d}{minutes:02d}{seconds:02d}{milliseconds:03d}"
+
+    @staticmethod
+    def _collect_extracted_frame_paths(output_dir: str) -> List[str]:
+        return sorted(
+            os.path.join(output_dir, name)
+            for name in os.listdir(output_dir)
+            if name.endswith(".jpg")
+        )
+
     def _extract_single_frame_optimized(self, timestamp: float, output_path: str,
                                        use_hw_accel: bool, hwaccel_type: str) -> bool:
         """

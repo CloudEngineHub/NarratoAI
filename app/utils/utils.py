@@ -570,29 +570,35 @@ def temp_dir(sub_dir: str = ""):
     return d
 
 
-def clear_keyframes_cache(video_path: str = None):
+def clear_keyframes_cache(video_path: str = None, cache_scope: str = "keyframes"):
     """
     清理关键帧缓存
     Args:
         video_path: 视频文件路径，如果指定则只清理该视频的缓存
+        cache_scope: 缓存作用域目录，默认 keyframes
     """
     try:
-        keyframes_dir = os.path.join(temp_dir(), "keyframes")
-        if not os.path.exists(keyframes_dir):
+        cache_dir = os.path.join(temp_dir(), cache_scope)
+        if not os.path.exists(cache_dir):
             return
 
+        import shutil
+
         if video_path:
-            # 理指定视频的缓存
+            # 清理指定视频的缓存（兼容前缀扩展键）
             video_hash = md5(video_path + str(os.path.getmtime(video_path)))
-            video_keyframes_dir = os.path.join(keyframes_dir, video_hash)
-            if os.path.exists(video_keyframes_dir):
-                import shutil
-                shutil.rmtree(video_keyframes_dir)
-                logger.info(f"已清理视频关键帧缓存: {video_path}")
+            for entry in os.listdir(cache_dir):
+                if not entry.startswith(video_hash):
+                    continue
+                target_path = os.path.join(cache_dir, entry)
+                if os.path.isdir(target_path):
+                    shutil.rmtree(target_path)
+                else:
+                    os.remove(target_path)
+            logger.info(f"已清理视频关键帧缓存: {video_path}")
         else:
             # 清理所有缓存
-            import shutil
-            shutil.rmtree(keyframes_dir)
+            shutil.rmtree(cache_dir)
             logger.info("已清理所有关键帧缓存")
 
     except Exception as e:

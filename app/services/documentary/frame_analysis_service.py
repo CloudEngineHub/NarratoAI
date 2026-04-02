@@ -1,3 +1,6 @@
+import os
+
+from app.utils import utils
 from app.services.documentary.frame_analysis_models import FrameBatchResult
 
 
@@ -45,3 +48,31 @@ JSON 必须包含以下键：
             fallback_summary=fallback_summary,
             error_message=error_message,
         )
+
+    def _build_cache_key(
+        self,
+        video_path: str,
+        interval_seconds: float,
+        prompt_version: str,
+        model_name: str,
+        batch_size: int,
+        max_concurrency: int,
+    ) -> str:
+        try:
+            video_mtime = os.path.getmtime(video_path)
+        except OSError:
+            video_mtime = 0
+
+        payload = "|".join(
+            [
+                str(video_path),
+                str(video_mtime),
+                str(interval_seconds),
+                str(prompt_version),
+                str(model_name),
+                str(batch_size),
+                str(max_concurrency),
+                "documentary-frame-analysis-v2",
+            ]
+        )
+        return utils.md5(payload)

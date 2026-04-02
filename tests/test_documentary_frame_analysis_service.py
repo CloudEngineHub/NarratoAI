@@ -1,7 +1,11 @@
 import unittest
+import os
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from app.services.documentary.frame_analysis_models import DocumentaryAnalysisConfig
 from app.services.documentary.frame_analysis_service import DocumentaryFrameAnalysisService
+from app.utils import utils
 
 
 class DocumentaryFrameAnalysisServiceTests(unittest.TestCase):
@@ -61,6 +65,45 @@ class DocumentaryFrameAnalysisServiceTests(unittest.TestCase):
         self.assertEqual("", batch.overall_activity_summary)
         self.assertFalse(hasattr(batch, "observations"))
         self.assertFalse(hasattr(batch, "summary"))
+
+    def test_cache_key_changes_when_interval_changes(self):
+        service = DocumentaryFrameAnalysisService()
+
+        with patch("app.services.documentary.frame_analysis_service.os.path.getmtime", return_value=100.0):
+            key_a = service._build_cache_key("video.mp4", 3.0, "prompt-v1", "model-a", 10, 2)
+            key_b = service._build_cache_key("video.mp4", 5.0, "prompt-v1", "model-a", 10, 2)
+
+        self.assertNotEqual(key_a, key_b)
+
+    def test_cache_key_changes_when_model_changes(self):
+        service = DocumentaryFrameAnalysisService()
+
+        with patch("app.services.documentary.frame_analysis_service.os.path.getmtime", return_value=100.0):
+            key_a = service._build_cache_key("video.mp4", 3.0, "prompt-v1", "model-a", 10, 2)
+            key_b = service._build_cache_key("video.mp4", 3.0, "prompt-v1", "model-b", 10, 2)
+
+        self.assertNotEqual(key_a, key_b)
+
+    def test_clear_keyframes_cache_respects_scope_and_prefix_match(self):
+        with TemporaryDirectory() as temp_root:
+            analysis_dir = os.path.join(temp_root, "analysis")
+            os.makedirs(analysis_dir, exist_ok=True)
+
+            with patch("app.utils.utils.os.path.getmtime", return_value=123.0):
+                prefix = utils.md5("video.mp4" + "123.0")
+
+            target_dir = os.path.join(analysis_dir, f"{prefix}_interval3")
+            keep_dir = os.path.join(analysis_dir, "other_video")
+            os.makedirs(target_dir, exist_ok=True)
+            os.makedirs(keep_dir, exist_ok=True)
+
+            with patch("app.utils.utils.temp_dir", return_value=temp_root), patch(
+                "app.utils.utils.os.path.getmtime", return_value=123.0
+            ):
+                utils.clear_keyframes_cache(video_path="video.mp4", cache_scope="analysis")
+
+            self.assertFalse(os.path.exists(target_dir))
+            self.assertTrue(os.path.exists(keep_dir))
 
 
 class DocumentaryAnalysisConfigTests(unittest.TestCase):
