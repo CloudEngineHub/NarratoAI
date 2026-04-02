@@ -45,5 +45,4 @@ task.md
 openspec/*
 AGENTS.md
 CLAUDE.md
-tests/*
-!tests/test_documentary_frame_analysis_service.py
+tests/.pytest_cache/

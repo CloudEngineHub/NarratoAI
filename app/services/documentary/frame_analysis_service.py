@@ -7,6 +7,16 @@ class DocumentaryFrameAnalysisService:
 首先，请详细描述每一帧的关键视觉信息（包含：主要内容、人物、动作和场景）。
 然后，基于所有帧的分析，请用简洁的语言总结整个视频片段中发生的主要活动或事件流程。
 请务必使用 JSON 格式输出。
+JSON 必须包含以下键：
+- frame_observations: 数组，且长度必须为 {frame_count}
+- overall_activity_summary: 字符串，描述整个批次主要活动
+示例结构：
+{{
+  "frame_observations": [
+    {{"timestamp": "00:00:00,000", "observation": "画面描述"}}
+  ],
+  "overall_activity_summary": "本批次主要活动总结"
+}}
 请务必不要遗漏视频帧，我提供了 {frame_count} 张视频帧，frame_observations 必须包含 {frame_count} 个元素
 """.strip()
 

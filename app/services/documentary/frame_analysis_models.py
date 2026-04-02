@@ -11,6 +11,14 @@ class DocumentaryAnalysisConfig:
     custom_prompt: str = ""
     max_concurrency: int = 2
 
+    def __post_init__(self) -> None:
+        if self.frame_interval_seconds <= 0:
+            raise ValueError("frame_interval_seconds must be > 0")
+        if self.vision_batch_size <= 0:
+            raise ValueError("vision_batch_size must be > 0")
+        if self.max_concurrency <= 0:
+            raise ValueError("max_concurrency must be > 0")
+
 
 @dataclass(slots=True)
 class FrameBatchResult:
