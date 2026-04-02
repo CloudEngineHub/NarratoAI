@@ -9,8 +9,6 @@ from loguru import logger
 
 from app.config import config
 from app.services.documentary.frame_analysis_service import DocumentaryFrameAnalysisService
-from app.services.generate_narration_script import generate_narration, parse_frame_analysis_to_markdown
-from webui.tools.generate_short_summary import parse_and_fix_json
 
 
 def generate_script_docu(params):
@@ -66,8 +64,8 @@ def generate_script_docu(params):
 
             update_progress(10, "正在提取关键帧...")
             service = DocumentaryFrameAnalysisService()
-            analysis_result = asyncio.run(
-                service.analyze_video(
+            script_items = asyncio.run(
+                service.generate_documentary_script(
                     video_path=params.video_origin_path,
                     video_theme=st.session_state.get("video_theme", ""),
                     custom_prompt=st.session_state.get("custom_prompt", ""),
@@ -82,31 +80,8 @@ def generate_script_docu(params):
                 )
             )
 
-            analysis_json_path = analysis_result["analysis_json_path"]
-            update_progress(80, "正在生成解说文案...")
-
-            text_provider = config.app.get("text_llm_provider", "gemini").lower()
-            text_api_key = config.app.get(f"text_{text_provider}_api_key")
-            text_model = config.app.get(f"text_{text_provider}_model_name")
-            text_base_url = config.app.get(f"text_{text_provider}_base_url")
-
-            markdown_output = parse_frame_analysis_to_markdown(analysis_json_path)
-            narration = generate_narration(
-                markdown_output,
-                text_api_key,
-                base_url=text_base_url,
-                model=text_model,
-            )
-            narration_data = parse_and_fix_json(narration)
-
-            if not narration_data or "items" not in narration_data:
-                logger.error(f"解说文案JSON解析失败，原始内容: {narration[:200]}...")
-                raise Exception("解说文案格式错误，无法解析JSON或缺少items字段")
-
-            narration_dict = [{**item, "OST": 2} for item in narration_data["items"]]
-            script = json.dumps(narration_dict, ensure_ascii=False, indent=2)
-
-            logger.info(f"纪录片解说脚本生成完成，共 {len(narration_dict)} 个片段")
+            logger.info(f"纪录片解说脚本生成完成，共 {len(script_items)} 个片段")
+            script = json.dumps(script_items, ensure_ascii=False, indent=2)
             if isinstance(script, list):
                 st.session_state["video_clip_json"] = script
             elif isinstance(script, str):

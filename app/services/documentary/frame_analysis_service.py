@@ -9,6 +9,7 @@ from loguru import logger
 
 from app.config import config
 from app.services.documentary.frame_analysis_models import FrameBatchResult
+from app.services.generate_narration_script import generate_narration, parse_frame_analysis_to_markdown
 from app.services.llm.migration_adapter import create_vision_analyzer
 from app.utils import utils, video_processor
 
@@ -39,15 +40,16 @@ JSON 必须包含以下键：
         video_path: str,
         video_theme: str = "",
         custom_prompt: str = "",
-        frame_interval_input: int | float = 3,
-        vision_batch_size: int = 10,
-        vision_llm_provider: str = "openai",
+        frame_interval_input: int | float | None = None,
+        vision_batch_size: int | None = None,
+        vision_llm_provider: str | None = None,
         progress_callback: Callable[[float, str], None] | None = None,
         vision_api_key: str | None = None,
         vision_model_name: str | None = None,
         vision_base_url: str | None = None,
         max_concurrency: int | None = None,
     ) -> list[dict]:
+        progress = progress_callback or (lambda _p, _m: None)
         analysis_result = await self.analyze_video(
             video_path=video_path,
             video_theme=video_theme,
@@ -61,7 +63,31 @@ JSON 必须包含以下键：
             vision_base_url=vision_base_url,
             max_concurrency=max_concurrency,
         )
-        return analysis_result["video_clip_json"]
+        analysis_json_path = analysis_result["analysis_json_path"]
+
+        progress(80, "正在生成解说文案...")
+        text_provider = config.app.get("text_llm_provider", "openai").lower()
+        text_api_key = config.app.get(f"text_{text_provider}_api_key")
+        text_model = config.app.get(f"text_{text_provider}_model_name")
+        text_base_url = config.app.get(f"text_{text_provider}_base_url")
+        if not text_api_key or not text_model:
+            raise ValueError(
+                f"未配置 {text_provider} 的文本模型参数。"
+                f"请在设置中配置 text_{text_provider}_api_key 和 text_{text_provider}_model_name"
+            )
+
+        markdown_output = parse_frame_analysis_to_markdown(analysis_json_path)
+        narration_raw = generate_narration(
+            markdown_output,
+            text_api_key,
+            base_url=text_base_url,
+            model=text_model,
+        )
+        narration_items = self._parse_narration_items(narration_raw)
+
+        final_script = [{**item, "OST": 2} for item in narration_items]
+        progress(100, "脚本生成完成")
+        return final_script
 
     async def analyze_video(
         self,
@@ -69,9 +95,9 @@ JSON 必须包含以下键：
         video_path: str,
         video_theme: str = "",
         custom_prompt: str = "",
-        frame_interval_input: int | float = 3,
-        vision_batch_size: int = 10,
-        vision_llm_provider: str = "openai",
+        frame_interval_input: int | float | None = None,
+        vision_batch_size: int | None = None,
+        vision_llm_provider: str | None = None,
         progress_callback: Callable[[float, str], None] | None = None,
         vision_api_key: str | None = None,
         vision_model_name: str | None = None,
@@ -144,6 +170,43 @@ JSON 必须包含以下键：
             "video_clip_json": video_clip_json,
             "keyframe_files": keyframe_files,
         }
+
+    def _parse_narration_items(self, narration_raw: str) -> list[dict[str, Any]]:
+        def load_json_candidate(payload: str) -> dict[str, Any] | None:
+            try:
+                return json.loads(payload)
+            except Exception:
+                return None
+
+        cleaned = (narration_raw or "").strip()
+        parsed = load_json_candidate(cleaned)
+        if parsed is None:
+            parsed = load_json_candidate(cleaned.replace("```json", "").replace("```", "").strip())
+        if parsed is None:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start >= 0 and end > start:
+                parsed = load_json_candidate(cleaned[start : end + 1])
+
+        items = []
+        if isinstance(parsed, dict):
+            raw_items = parsed.get("items")
+            if isinstance(raw_items, list):
+                items = [item for item in raw_items if isinstance(item, dict)]
+
+        if items:
+            return items
+
+        fallback_text = (cleaned[:200] + "...") if len(cleaned) > 200 else cleaned
+        if not fallback_text:
+            fallback_text = "解说文案解析失败，请重试。"
+        return [
+            {
+                "timestamp": "00:00:00,000-00:00:10,000",
+                "picture": "解析失败，使用默认内容",
+                "narration": fallback_text,
+            }
+        ]
 
     def _resolve_frame_interval(self, frame_interval_input: int | float | None) -> float:
         interval = frame_interval_input
