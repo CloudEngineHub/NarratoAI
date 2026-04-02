@@ -141,6 +141,48 @@ class DocumentaryFrameAnalysisServiceScriptGenerationTests(unittest.IsolatedAsyn
         self.assertEqual("一只猫警觉地望向镜头。", result[0]["narration"])
         self.assertEqual(2, result[0]["OST"])
 
+    async def test_generate_documentary_script_raises_when_narration_json_is_malformed(self):
+        service = DocumentaryFrameAnalysisService()
+        analysis_payload = {
+            "batches": [
+                {
+                    "batch_index": 0,
+                    "time_range": "00:00:00,000-00:00:03,000",
+                    "overall_activity_summary": "测试摘要",
+                    "fallback_summary": "",
+                    "frame_observations": [
+                        {"timestamp": "00:00:00,000", "observation": "镜头里有一只猫"},
+                    ],
+                }
+            ]
+        }
+
+        with TemporaryDirectory() as temp_dir:
+            analysis_path = Path(temp_dir) / "frame_analysis_test.json"
+            analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False), encoding="utf-8")
+
+            with patch.object(
+                DocumentaryFrameAnalysisService,
+                "analyze_video",
+                AsyncMock(return_value={"analysis_json_path": str(analysis_path)}),
+            ), patch.dict(
+                "app.services.documentary.frame_analysis_service.config.app",
+                {
+                    "text_llm_provider": "openai",
+                    "text_openai_api_key": "test-key",
+                    "text_openai_model_name": "test-model",
+                    "text_openai_base_url": "https://example.com/v1",
+                },
+            ), patch(
+                "app.services.documentary.frame_analysis_service.generate_narration",
+                return_value="malformed narration payload",
+            ):
+                with self.assertRaises(Exception) as ctx:
+                    await service.generate_documentary_script(video_path="demo.mp4")
+
+        self.assertIn("解说文案格式错误", str(ctx.exception))
+        self.assertIn("items", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

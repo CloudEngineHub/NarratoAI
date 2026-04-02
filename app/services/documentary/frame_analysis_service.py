@@ -188,25 +188,16 @@ JSON 必须包含以下键：
             if start >= 0 and end > start:
                 parsed = load_json_candidate(cleaned[start : end + 1])
 
-        items = []
+        items: list[dict[str, Any]] = []
         if isinstance(parsed, dict):
             raw_items = parsed.get("items")
             if isinstance(raw_items, list):
                 items = [item for item in raw_items if isinstance(item, dict)]
 
-        if items:
-            return items
+        if not items:
+            raise ValueError("解说文案格式错误，无法解析JSON或缺少items字段")
 
-        fallback_text = (cleaned[:200] + "...") if len(cleaned) > 200 else cleaned
-        if not fallback_text:
-            fallback_text = "解说文案解析失败，请重试。"
-        return [
-            {
-                "timestamp": "00:00:00,000-00:00:10,000",
-                "picture": "解析失败，使用默认内容",
-                "narration": fallback_text,
-            }
-        ]
+        return items
 
     def _resolve_frame_interval(self, frame_interval_input: int | float | None) -> float:
         interval = frame_interval_input
