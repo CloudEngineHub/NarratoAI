@@ -135,7 +135,13 @@ JSON 必须包含以下键：
                 }
             )
 
-        summary = payload["overall_activity_summary"]
+        raw_summary = payload.get("overall_activity_summary", "")
+        if isinstance(raw_summary, str):
+            summary = raw_summary
+        elif raw_summary is None:
+            summary = ""
+        else:
+            summary = str(raw_summary)
 
         return FrameBatchResult(
             batch_index=batch_index,
@@ -159,11 +165,5 @@ JSON 必须包含以下键：
                 "Batch response frame_observations length is shorter than provided frame_paths: "
                 f"{len(payload['frame_observations'])} < {expected_frame_count}"
             )
-
-        if "overall_activity_summary" not in payload:
-            return "Batch response must include overall_activity_summary"
-
-        if not isinstance(payload["overall_activity_summary"], str):
-            return "Batch response overall_activity_summary must be a string"
 
         return ""

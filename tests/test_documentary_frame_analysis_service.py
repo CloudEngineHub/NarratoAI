@@ -162,6 +162,31 @@ class DocumentaryFrameAnalysisServiceTests(unittest.TestCase):
         self.assertEqual("人物从房间走到街道", batch.overall_activity_summary)
         self.assertEqual("", batch.fallback_summary)
 
+    def test_parse_batch_preserves_frames_when_summary_is_missing(self):
+        service = DocumentaryFrameAnalysisService()
+        raw_response = """
+{
+  "frame_observations": [
+    {"observation": "第一帧画面"},
+    {"observation": "第二帧画面"}
+  ]
+}
+""".strip()
+
+        batch = service._parse_batch_response(
+            batch_index=2,
+            raw_response=raw_response,
+            frame_paths=[
+                "/tmp/keyframe_000000_000000000.jpg",
+                "/tmp/keyframe_000075_000003000.jpg",
+            ],
+            time_range="00:00:00,000-00:00:06,000",
+        )
+
+        self.assertEqual("success", batch.status)
+        self.assertEqual(2, len(batch.frame_observations))
+        self.assertEqual("", batch.overall_activity_summary)
+
     def test_cache_key_changes_when_interval_changes(self):
         service = DocumentaryFrameAnalysisService()
 
