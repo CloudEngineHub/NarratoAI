@@ -183,6 +183,86 @@ class DocumentaryFrameAnalysisServiceScriptGenerationTests(unittest.IsolatedAsyn
         self.assertIn("解说文案格式错误", str(ctx.exception))
         self.assertIn("items", str(ctx.exception))
 
+    def test_parse_narration_items_recovers_from_common_json_damage(self):
+        service = DocumentaryFrameAnalysisService()
+        damaged_payload = """
+解释文字
+```json
+{{
+  "items": [
+    {{
+      "timestamp": "00:00:00,000-00:00:03,000",
+      "picture": "镜头里有一只猫",
+      "narration": "一只猫警觉地望向镜头。",
+    }},
+  ],
+}}
+```
+补充文字
+""".strip()
+
+        parsed_items = service._parse_narration_items(damaged_payload)
+
+        self.assertEqual(1, len(parsed_items))
+        self.assertEqual("00:00:00,000-00:00:03,000", parsed_items[0]["timestamp"])
+        self.assertEqual("镜头里有一只猫", parsed_items[0]["picture"])
+        self.assertEqual("一只猫警觉地望向镜头。", parsed_items[0]["narration"])
+
+    def test_parse_narration_items_raises_for_unrecoverable_payload(self):
+        service = DocumentaryFrameAnalysisService()
+
+        with self.assertRaises(ValueError) as ctx:
+            service._parse_narration_items("not-json-at-all ::: ???")
+
+        self.assertIn("解说文案格式错误", str(ctx.exception))
+        self.assertIn("items", str(ctx.exception))
+
+    async def test_generate_documentary_script_includes_theme_and_custom_prompt_for_narration(self):
+        service = DocumentaryFrameAnalysisService()
+        analysis_payload = {
+            "batches": [
+                {
+                    "batch_index": 0,
+                    "time_range": "00:00:00,000-00:00:03,000",
+                    "overall_activity_summary": "测试摘要",
+                    "fallback_summary": "",
+                    "frame_observations": [
+                        {"timestamp": "00:00:00,000", "observation": "镜头里有一只猫"},
+                    ],
+                }
+            ]
+        }
+
+        with TemporaryDirectory() as temp_dir:
+            analysis_path = Path(temp_dir) / "frame_analysis_test.json"
+            analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False), encoding="utf-8")
+
+            with patch.object(
+                DocumentaryFrameAnalysisService,
+                "analyze_video",
+                AsyncMock(return_value={"analysis_json_path": str(analysis_path)}),
+            ), patch.dict(
+                "app.services.documentary.frame_analysis_service.config.app",
+                {
+                    "text_llm_provider": "openai",
+                    "text_openai_api_key": "test-key",
+                    "text_openai_model_name": "test-model",
+                    "text_openai_base_url": "https://example.com/v1",
+                },
+            ), patch(
+                "app.services.documentary.frame_analysis_service.generate_narration",
+                return_value='{"items":[{"timestamp":"00:00:00,000-00:00:03,000","picture":"镜头里有一只猫","narration":"一只猫警觉地望向镜头。"}]}',
+            ) as mocked_generate:
+                await service.generate_documentary_script(
+                    video_path="demo.mp4",
+                    video_theme="野生动物纪录片",
+                    custom_prompt="重点描述危险信号",
+                )
+
+        narration_input = mocked_generate.call_args.args[0]
+        self.assertIn("视频主题：野生动物纪录片", narration_input)
+        self.assertIn("补充创作要求：重点描述危险信号", narration_input)
+
 
 if __name__ == "__main__":
     unittest.main()

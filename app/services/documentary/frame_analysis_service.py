@@ -77,8 +77,13 @@ JSON 必须包含以下键：
             )
 
         markdown_output = parse_frame_analysis_to_markdown(analysis_json_path)
+        narration_input = self._build_narration_input(
+            markdown_output=markdown_output,
+            video_theme=video_theme,
+            custom_prompt=custom_prompt,
+        )
         narration_raw = generate_narration(
-            markdown_output,
+            narration_input,
             text_api_key,
             base_url=text_base_url,
             model=text_model,
@@ -172,21 +177,7 @@ JSON 必须包含以下键：
         }
 
     def _parse_narration_items(self, narration_raw: str) -> list[dict[str, Any]]:
-        def load_json_candidate(payload: str) -> dict[str, Any] | None:
-            try:
-                return json.loads(payload)
-            except Exception:
-                return None
-
-        cleaned = (narration_raw or "").strip()
-        parsed = load_json_candidate(cleaned)
-        if parsed is None:
-            parsed = load_json_candidate(cleaned.replace("```json", "").replace("```", "").strip())
-        if parsed is None:
-            start = cleaned.find("{")
-            end = cleaned.rfind("}")
-            if start >= 0 and end > start:
-                parsed = load_json_candidate(cleaned[start : end + 1])
+        parsed = self._repair_narration_payload(narration_raw)
 
         items: list[dict[str, Any]] = []
         if isinstance(parsed, dict):
@@ -198,6 +189,64 @@ JSON 必须包含以下键：
             raise ValueError("解说文案格式错误，无法解析JSON或缺少items字段")
 
         return items
+
+    def _build_narration_input(self, *, markdown_output: str, video_theme: str, custom_prompt: str) -> str:
+        context_lines: list[str] = []
+        if (video_theme or "").strip():
+            context_lines.append(f"视频主题：{video_theme.strip()}")
+        if (custom_prompt or "").strip():
+            context_lines.append(f"补充创作要求：{custom_prompt.strip()}")
+
+        if not context_lines:
+            return markdown_output
+
+        context_block = "\n".join(f"- {line}" for line in context_lines)
+        return f"{markdown_output.rstrip()}\n\n## 创作上下文\n{context_block}\n"
+
+    def _repair_narration_payload(self, narration_raw: str) -> dict[str, Any] | None:
+        def load_json_candidate(payload: str) -> dict[str, Any] | None:
+            try:
+                parsed = json.loads(payload)
+                return parsed if isinstance(parsed, dict) else None
+            except Exception:
+                return None
+
+        cleaned = (narration_raw or "").strip()
+        if not cleaned:
+            return None
+
+        candidates: list[str] = [cleaned]
+        candidates.append(cleaned.replace("{{", "{").replace("}}", "}"))
+
+        json_block = re.search(r"```json\s*(.*?)\s*```", cleaned, re.DOTALL)
+        if json_block:
+            candidates.append(json_block.group(1).strip())
+
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start >= 0 and end > start:
+            candidates.append(cleaned[start : end + 1])
+
+        for candidate in candidates:
+            parsed = load_json_candidate(candidate)
+            if parsed is not None:
+                return parsed
+
+        fixed = cleaned.replace("{{", "{").replace("}}", "}")
+        fixed_start = fixed.find("{")
+        fixed_end = fixed.rfind("}")
+        if fixed_start >= 0 and fixed_end > fixed_start:
+            fixed = fixed[fixed_start : fixed_end + 1]
+
+        fixed = re.sub(r"^\s*#.*$", "", fixed, flags=re.MULTILINE)
+        fixed = re.sub(r"^\s*//.*$", "", fixed, flags=re.MULTILINE)
+        fixed = re.sub(r",\s*}", "}", fixed)
+        fixed = re.sub(r",\s*]", "]", fixed)
+        fixed = re.sub(r"'([^']*)'\s*:", r'"\1":', fixed)
+        fixed = re.sub(r'([{\[,]\s*)([A-Za-z_][\w\u4e00-\u9fff]*)(\s*:)', r'\1"\2"\3', fixed)
+        fixed = re.sub(r'""([^"]*?)""', r'"\1"', fixed)
+
+        return load_json_candidate(fixed)
 
     def _resolve_frame_interval(self, frame_interval_input: int | float | None) -> float:
         interval = frame_interval_input

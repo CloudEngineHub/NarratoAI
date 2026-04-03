@@ -6,6 +6,7 @@ import unittest
 from app.config import config
 from app.services.llm.base import TextModelProvider
 from app.services.llm.manager import LLMServiceManager
+from app.services.llm.migration_adapter import VisionAnalyzerAdapter
 from app.services.llm.openai_compatible_provider import OpenAICompatibleVisionProvider
 from app.services.llm.providers import register_all_providers
 
@@ -112,6 +113,54 @@ class OpenAICompatVisionConcurrencyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(6, len(result))
         self.assertEqual(2, max_in_flight)
+
+
+class ExplicitVisionAdapterSettingsTests(unittest.IsolatedAsyncioTestCase):
+    class _CapturingVisionProvider:
+        last_init: tuple[str, str, str | None] | None = None
+
+        def __init__(self, api_key: str, model_name: str, base_url: str | None = None):
+            self.api_key = api_key
+            self.model_name = model_name
+            self.base_url = base_url
+            ExplicitVisionAdapterSettingsTests._CapturingVisionProvider.last_init = (api_key, model_name, base_url)
+
+        async def analyze_images(self, images, prompt, batch_size=10, max_concurrency=1, **kwargs):
+            return [f"{self.model_name}|{self.api_key}|{self.base_url}"]
+
+    def setUp(self):
+        _reset_manager_state()
+        self._original_app = dict(config.app)
+
+    def tearDown(self):
+        _reset_manager_state()
+        config.app.clear()
+        config.app.update(self._original_app)
+
+    async def test_adapter_uses_explicit_settings_instead_of_global_config(self):
+        LLMServiceManager.register_vision_provider("openai", self._CapturingVisionProvider)
+        config.app["vision_openai_api_key"] = "config-key"
+        config.app["vision_openai_model_name"] = "config-model"
+        config.app["vision_openai_base_url"] = "https://config.example/v1"
+
+        adapter = VisionAnalyzerAdapter(
+            provider="openai",
+            api_key="explicit-key",
+            model="explicit-model",
+            base_url="https://explicit.example/v1",
+        )
+        result = await adapter.analyze_images(
+            images=["/tmp/keyframe_000001_000000100.jpg"],
+            prompt="描述画面",
+            batch_size=1,
+            max_concurrency=1,
+        )
+
+        self.assertEqual(
+            ("explicit-key", "explicit-model", "https://explicit.example/v1"),
+            self._CapturingVisionProvider.last_init,
+        )
+        self.assertEqual("explicit-model|explicit-key|https://explicit.example/v1", result[0]["response"])
 
 
 if __name__ == "__main__":

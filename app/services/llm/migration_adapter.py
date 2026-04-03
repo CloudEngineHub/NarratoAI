@@ -13,6 +13,7 @@ from loguru import logger
 
 from .unified_service import UnifiedLLMService
 from .exceptions import LLMServiceError
+from .manager import LLMServiceManager
 # 导入新的提示词管理系统
 from app.services.prompts import PromptManager
 
@@ -155,6 +156,23 @@ class VisionAnalyzerAdapter:
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
+
+    def _build_provider_with_explicit_settings(self):
+        provider_name = (self.provider or "").lower()
+        if not LLMServiceManager.is_registered():
+            from .providers import register_all_providers
+
+            register_all_providers()
+
+        provider_class = LLMServiceManager._vision_providers.get(provider_name)
+        if provider_class is None:
+            raise LLMServiceError(f"视觉模型提供商未注册: {provider_name}")
+
+        return provider_class(
+            api_key=self.api_key,
+            model_name=self.model,
+            base_url=self.base_url,
+        )
     
     async def analyze_images(self,
                            images: List[Union[str, Path, PIL.Image.Image]],
@@ -174,11 +192,10 @@ class VisionAnalyzerAdapter:
             分析结果列表，格式与旧实现兼容
         """
         try:
-            # 使用统一服务分析图片
-            results = await UnifiedLLMService.analyze_images(
+            provider = self._build_provider_with_explicit_settings()
+            results = await provider.analyze_images(
                 images=images,
                 prompt=prompt,
-                provider=self.provider,
                 batch_size=batch_size,
                 max_concurrency=max_concurrency,
             )
