@@ -11,6 +11,19 @@ from app.config import config
 from app.services.documentary.frame_analysis_service import DocumentaryFrameAnalysisService
 
 
+def _normalize_progress_value(progress: float | int) -> int:
+    """Normalize mixed progress inputs to Streamlit's 0-100 integer range."""
+    try:
+        value = float(progress)
+    except (TypeError, ValueError):
+        return 0
+
+    if 0.0 <= value <= 1.0:
+        value *= 100
+
+    return max(0, min(100, int(round(value))))
+
+
 def generate_script_docu(params):
     """
     生成纪录片视频脚本。
@@ -21,11 +34,12 @@ def generate_script_docu(params):
     status_text = st.empty()
 
     def update_progress(progress: float, message: str = ""):
-        progress_bar.progress(progress)
+        normalized_progress = _normalize_progress_value(progress)
+        progress_bar.progress(normalized_progress)
         if message:
             status_text.text(f"🎬 {message}")
         else:
-            status_text.text(f"📊 进度: {progress}%")
+            status_text.text(f"📊 进度: {normalized_progress}%")
 
     try:
         with st.spinner("正在生成脚本..."):
