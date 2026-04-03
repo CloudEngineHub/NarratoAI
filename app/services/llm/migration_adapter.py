@@ -5,7 +5,6 @@
 """
 
 import asyncio
-import json
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
 import PIL.Image
@@ -13,6 +12,7 @@ from loguru import logger
 
 from .unified_service import UnifiedLLMService
 from .exceptions import LLMServiceError
+from .manager import LLMServiceManager
 # 导入新的提示词管理系统
 from app.services.prompts import PromptManager
 
@@ -110,41 +110,11 @@ class LegacyLLMAdapter:
                 temperature=1.5,
                 response_format="json"
             )
-
-            # 使用增强的JSON解析器
-            from webui.tools.generate_short_summary import parse_and_fix_json
-            parsed_result = parse_and_fix_json(result)
-
-            if not parsed_result:
-                logger.error("无法解析LLM返回的JSON数据")
-                # 返回一个基本的JSON结构而不是错误字符串
-                return json.dumps({
-                    "items": [
-                        {
-                            "_id": 1,
-                            "timestamp": "00:00:00-00:00:10",
-                            "picture": "解析失败，请检查LLM输出",
-                            "narration": "解说文案生成失败，请重试"
-                        }
-                    ]
-                }, ensure_ascii=False)
-
-            # 确保返回的是JSON字符串
-            return json.dumps(parsed_result, ensure_ascii=False)
+            return result if isinstance(result, str) else str(result)
 
         except Exception as e:
             logger.error(f"生成解说文案失败: {str(e)}")
-            # 返回一个基本的JSON结构而不是错误字符串
-            return json.dumps({
-                "items": [
-                    {
-                        "_id": 1,
-                        "timestamp": "00:00:00-00:00:10",
-                        "picture": "生成失败",
-                        "narration": f"解说文案生成失败: {str(e)}"
-                    }
-                ]
-            }, ensure_ascii=False)
+            raise
 
 
 class VisionAnalyzerAdapter:
@@ -155,11 +125,29 @@ class VisionAnalyzerAdapter:
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
+
+    def _build_provider_with_explicit_settings(self):
+        provider_name = (self.provider or "").lower()
+        if not LLMServiceManager.is_registered():
+            from .providers import register_all_providers
+
+            register_all_providers()
+
+        provider_class = LLMServiceManager._vision_providers.get(provider_name)
+        if provider_class is None:
+            raise LLMServiceError(f"视觉模型提供商未注册: {provider_name}")
+
+        return provider_class(
+            api_key=self.api_key,
+            model_name=self.model,
+            base_url=self.base_url,
+        )
     
     async def analyze_images(self,
                            images: List[Union[str, Path, PIL.Image.Image]],
                            prompt: str,
-                           batch_size: int = 10) -> List[Dict[str, Any]]:
+                           batch_size: int = 10,
+                           max_concurrency: int = 1) -> List[Dict[str, Any]]:
         """
         分析图片 - 兼容原有接口
 
@@ -167,17 +155,20 @@ class VisionAnalyzerAdapter:
             images: 图片列表
             prompt: 分析提示词
             batch_size: 批处理大小
+            max_concurrency: 最大并发批次数
 
         Returns:
             分析结果列表，格式与旧实现兼容
         """
         try:
-            # 使用统一服务分析图片
-            results = await UnifiedLLMService.analyze_images(
+            provider = self._build_provider_with_explicit_settings()
+            results = await provider.analyze_images(
                 images=images,
                 prompt=prompt,
-                provider=self.provider,
-                batch_size=batch_size
+                batch_size=batch_size,
+                max_concurrency=max_concurrency,
+                api_key=self.api_key,
+                api_base=self.base_url,
             )
 
             # 转换为旧格式以保持向后兼容性

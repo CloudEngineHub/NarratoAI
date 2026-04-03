@@ -1,5 +1,5 @@
 [app]
-    project_version="0.7.6"
+    project_version="0.7.8"
 
     # LLM API 超时配置（秒）
     llm_vision_timeout = 120  # 视觉模型基础超时时间
@@ -152,3 +152,6 @@
 
     # 大模型单次处理的关键帧数量
     vision_batch_size = 10
+
+    # 视觉批处理最大并发批次数（OpenAI 兼容 provider）
+    vision_max_concurrency = 2

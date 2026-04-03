@@ -4,6 +4,7 @@ OpenAI 兼容提供商实现
 使用 OpenAI 官方 SDK 调用 OpenAI 兼容接口，支持文本和视觉模型。
 """
 
+import asyncio
 import io
 import base64
 import re
@@ -96,24 +97,35 @@ class OpenAICompatibleVisionProvider(_OpenAICompatibleBase, VisionModelProvider)
         images: List[Union[str, Path, PIL.Image.Image]],
         prompt: str,
         batch_size: int = 10,
+        max_concurrency: int = 1,
         **kwargs,
     ) -> List[str]:
         logger.info(f"开始使用 OpenAI 兼容接口 ({self.model_name}) 分析 {len(images)} 张图片")
 
         processed_images = self._prepare_images(images)
-        results: List[str] = []
+        if not processed_images:
+            return []
 
-        for i in range(0, len(processed_images), batch_size):
-            batch = processed_images[i : i + batch_size]
-            logger.info(f"处理第 {i // batch_size + 1} 批，共 {len(batch)} 张图片")
-            try:
-                result = await self._analyze_batch(batch, prompt, **kwargs)
-                results.append(result)
-            except Exception as exc:
-                logger.error(f"批次 {i // batch_size + 1} 处理失败: {exc}")
-                results.append(f"批次处理失败: {exc}")
+        bounded_concurrency = max(1, int(max_concurrency))
+        semaphore = asyncio.Semaphore(bounded_concurrency)
+        batches = [
+            (index // batch_size, processed_images[index : index + batch_size])
+            for index in range(0, len(processed_images), batch_size)
+        ]
 
-        return results
+        async def run_batch(batch_index: int, batch: List[PIL.Image.Image]) -> tuple[int, str]:
+            logger.info(f"处理第 {batch_index + 1} 批，共 {len(batch)} 张图片")
+            async with semaphore:
+                try:
+                    result = await self._analyze_batch(batch, prompt, **kwargs)
+                    return batch_index, result
+                except Exception as exc:
+                    logger.error(f"批次 {batch_index + 1} 处理失败: {exc}")
+                    return batch_index, f"批次处理失败: {exc}"
+
+        completed = await asyncio.gather(*(run_batch(index, batch) for index, batch in batches))
+        completed.sort(key=lambda item: item[0])
+        return [result for _, result in completed]
 
     async def _analyze_batch(self, batch: List[PIL.Image.Image], prompt: str, **kwargs) -> str:
         content = [{"type": "text", "text": prompt}]
