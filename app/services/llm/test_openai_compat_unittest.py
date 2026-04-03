@@ -2,11 +2,12 @@
 
 import asyncio
 import unittest
+from unittest.mock import patch
 
 from app.config import config
 from app.services.llm.base import TextModelProvider
 from app.services.llm.manager import LLMServiceManager
-from app.services.llm.migration_adapter import VisionAnalyzerAdapter
+from app.services.llm.migration_adapter import LegacyLLMAdapter, VisionAnalyzerAdapter
 from app.services.llm.openai_compatible_provider import OpenAICompatibleVisionProvider
 from app.services.llm.providers import register_all_providers
 
@@ -118,6 +119,7 @@ class OpenAICompatVisionConcurrencyTests(unittest.IsolatedAsyncioTestCase):
 class ExplicitVisionAdapterSettingsTests(unittest.IsolatedAsyncioTestCase):
     class _CapturingVisionProvider:
         last_init: tuple[str, str, str | None] | None = None
+        last_call_kwargs: dict | None = None
 
         def __init__(self, api_key: str, model_name: str, base_url: str | None = None):
             self.api_key = api_key
@@ -126,6 +128,7 @@ class ExplicitVisionAdapterSettingsTests(unittest.IsolatedAsyncioTestCase):
             ExplicitVisionAdapterSettingsTests._CapturingVisionProvider.last_init = (api_key, model_name, base_url)
 
         async def analyze_images(self, images, prompt, batch_size=10, max_concurrency=1, **kwargs):
+            ExplicitVisionAdapterSettingsTests._CapturingVisionProvider.last_call_kwargs = dict(kwargs)
             return [f"{self.model_name}|{self.api_key}|{self.base_url}"]
 
     def setUp(self):
@@ -160,7 +163,31 @@ class ExplicitVisionAdapterSettingsTests(unittest.IsolatedAsyncioTestCase):
             ("explicit-key", "explicit-model", "https://explicit.example/v1"),
             self._CapturingVisionProvider.last_init,
         )
+        self.assertEqual("explicit-key", self._CapturingVisionProvider.last_call_kwargs["api_key"])
+        self.assertEqual("https://explicit.example/v1", self._CapturingVisionProvider.last_call_kwargs["api_base"])
         self.assertEqual("explicit-model|explicit-key|https://explicit.example/v1", result[0]["response"])
+
+
+class LegacyNarrationAdapterBehaviorTests(unittest.TestCase):
+    def test_generate_narration_returns_raw_unrecoverable_payload_without_fabrication(self):
+        raw_payload = "not-json-at-all ::: ???"
+
+        with patch(
+            "app.services.llm.migration_adapter.PromptManager.get_prompt",
+            return_value="prompt",
+        ), patch(
+            "app.services.llm.migration_adapter._run_async_safely",
+            return_value=raw_payload,
+        ):
+            result = LegacyLLMAdapter.generate_narration(
+                markdown_content="markdown",
+                api_key="test-key",
+                base_url="https://example.com/v1",
+                model="test-model",
+            )
+
+        self.assertEqual(raw_payload, result)
+        self.assertNotIn('"items"', result)
 
 
 if __name__ == "__main__":

@@ -119,9 +119,11 @@ JSON 必须包含以下键：
         concurrency = self._resolve_max_concurrency(max_concurrency)
         provider = (vision_llm_provider or config.app.get("vision_llm_provider", "openai")).lower()
 
-        api_key = vision_api_key or config.app.get(f"vision_{provider}_api_key")
-        model_name = vision_model_name or config.app.get(f"vision_{provider}_model_name")
-        base_url = vision_base_url or config.app.get(f"vision_{provider}_base_url", "")
+        api_key = vision_api_key if vision_api_key is not None else config.app.get(f"vision_{provider}_api_key")
+        model_name = (
+            vision_model_name if vision_model_name is not None else config.app.get(f"vision_{provider}_model_name")
+        )
+        base_url = vision_base_url if vision_base_url is not None else config.app.get(f"vision_{provider}_base_url", "")
         if not api_key or not model_name:
             raise ValueError(
                 f"未配置 {provider} 的 API Key 或模型名称。"

@@ -5,7 +5,6 @@
 """
 
 import asyncio
-import json
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
 import PIL.Image
@@ -111,41 +110,11 @@ class LegacyLLMAdapter:
                 temperature=1.5,
                 response_format="json"
             )
-
-            # 使用增强的JSON解析器
-            from webui.tools.generate_short_summary import parse_and_fix_json
-            parsed_result = parse_and_fix_json(result)
-
-            if not parsed_result:
-                logger.error("无法解析LLM返回的JSON数据")
-                # 返回一个基本的JSON结构而不是错误字符串
-                return json.dumps({
-                    "items": [
-                        {
-                            "_id": 1,
-                            "timestamp": "00:00:00-00:00:10",
-                            "picture": "解析失败，请检查LLM输出",
-                            "narration": "解说文案生成失败，请重试"
-                        }
-                    ]
-                }, ensure_ascii=False)
-
-            # 确保返回的是JSON字符串
-            return json.dumps(parsed_result, ensure_ascii=False)
+            return result if isinstance(result, str) else str(result)
 
         except Exception as e:
             logger.error(f"生成解说文案失败: {str(e)}")
-            # 返回一个基本的JSON结构而不是错误字符串
-            return json.dumps({
-                "items": [
-                    {
-                        "_id": 1,
-                        "timestamp": "00:00:00-00:00:10",
-                        "picture": "生成失败",
-                        "narration": f"解说文案生成失败: {str(e)}"
-                    }
-                ]
-            }, ensure_ascii=False)
+            raise
 
 
 class VisionAnalyzerAdapter:
@@ -198,6 +167,8 @@ class VisionAnalyzerAdapter:
                 prompt=prompt,
                 batch_size=batch_size,
                 max_concurrency=max_concurrency,
+                api_key=self.api_key,
+                api_base=self.base_url,
             )
 
             # 转换为旧格式以保持向后兼容性

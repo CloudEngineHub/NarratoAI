@@ -260,8 +260,56 @@ class DocumentaryFrameAnalysisServiceScriptGenerationTests(unittest.IsolatedAsyn
                 )
 
         narration_input = mocked_generate.call_args.args[0]
+        self.assertIn("## 创作上下文", narration_input)
         self.assertIn("视频主题：野生动物纪录片", narration_input)
         self.assertIn("补充创作要求：重点描述危险信号", narration_input)
+
+    async def test_analyze_video_forwards_explicit_empty_base_url_without_config_fallback(self):
+        service = DocumentaryFrameAnalysisService()
+
+        with patch.dict(
+            "app.services.documentary.frame_analysis_service.config.app",
+            {
+                "vision_llm_provider": "openai",
+                "vision_openai_api_key": "config-key",
+                "vision_openai_model_name": "config-model",
+                "vision_openai_base_url": "https://config.example/v1",
+            },
+        ), patch(
+            "app.services.documentary.frame_analysis_service.os.path.exists",
+            return_value=True,
+        ), patch.object(
+            service,
+            "_load_or_extract_keyframes",
+            return_value=["/tmp/keyframe_000001_000000100.jpg"],
+        ), patch.object(
+            service,
+            "_analyze_batches",
+            AsyncMock(return_value=[]),
+        ), patch.object(
+            service,
+            "_save_analysis_artifact",
+            return_value="/tmp/frame_analysis_test.json",
+        ), patch.object(
+            service,
+            "_build_video_clip_json",
+            return_value=[],
+        ), patch(
+            "app.services.documentary.frame_analysis_service.create_vision_analyzer",
+            return_value=object(),
+        ) as mocked_create_analyzer:
+            await service.analyze_video(
+                video_path="/tmp/demo.mp4",
+                vision_api_key="explicit-key",
+                vision_model_name="explicit-model",
+                vision_base_url="",
+            )
+
+        called_kwargs = mocked_create_analyzer.call_args.kwargs
+        self.assertEqual("openai", called_kwargs["provider"])
+        self.assertEqual("explicit-key", called_kwargs["api_key"])
+        self.assertEqual("explicit-model", called_kwargs["model"])
+        self.assertEqual("", called_kwargs["base_url"])
 
 
 if __name__ == "__main__":
